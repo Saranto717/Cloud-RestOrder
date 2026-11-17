@@ -1,0 +1,240 @@
+@page "/admin/issued-documents"
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IFiscalDocumentService Fiscal
+@inject PrinterService Printer
+
+<h2>Εκδοθείσες Αποδείξεις / Τιμολόγια</h2>
+<p class="hint">
+    Η ακύρωση παραστατικού αξίας που έχει λάβει MARK γίνεται με έκδοση πιστωτικού
+    (11.4 Πιστωτικό Στοιχείο Λιανικής για απόδειξη, 5.1 για τιμολόγιο) συσχετισμένου με το αρχικό MARK.
+    Ο Parochos <code>/api/Cancel</code> ισχύει μόνο για δελτία αποστολής/παραλαβής.
+    Η επιστροφή χρημάτων δηλώνεται ως μετρητά· επιστροφή σε κάρτα γίνεται χειροκίνητα στο EFT-POS.
+</p>
+
+<div class="admin-form quick-add-form">
+    <div class="form-row"><label>Ημερομηνία</label><input type="date" @bind="date" @bind:after="LoadAsync" data-testid="issued-docs-date" /></div>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <p class="@(messageOk ? "hint" : "error")" data-testid="issued-docs-message">@message</p>
+}
+
+@if (rows.Count == 0)
+{
+    <p class="hint" data-testid="issued-docs-empty">Δεν υπάρχουν εκδοθέντα παραστατικά με MARK για την ημερομηνία.</p>
+}
+else
+{
+    <table class="admin-table" data-testid="issued-docs-table">
+        <thead><tr><th>Ώρα</th><th>Τραπέζι</th><th>Παραστατικό</th><th>MARK</th><th>Ποσό</th><th>Πληρωμή</th><th>Κατάσταση</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var r in rows)
+            {
+                <tr data-testid="issued-doc-row-@r.Key">
+                    <td>@r.Time.ToString("HH:mm")</td>
+                    <td>@r.Table</td>
+                    <td>@r.Kind @r.Code</td>
+                    <td>@r.Mark</td>
+                    <td>@r.Amount.ToString("0.00") €</td>
+                    <td>@r.Payment</td>
+                    <td>
+                        @if (r.CreditMark is not null)
+                        {
+                            <span data-testid="issued-doc-credited-@r.Key">Ακυρώθηκε (πιστωτικό MARK @r.CreditMark)</span>
+                        }
+                        else
+                        {
+                            <span>Ενεργό</span>
+                        }
+                    </td>
+                    <td>
+                        @if (r.CreditMark is null)
+                        {
+                            @if (confirmKey == r.Key)
+                            {
+                                <input @bind="reason" placeholder="Αιτιολογία" data-testid="credit-reason-input" />
+                                <button disabled="@busy" @onclick="() => CreditAsync(r)" data-testid="credit-confirm-btn">@(busy ? "Αποστολή..." : "Επιβεβαίωση")</button>
+                                <button disabled="@busy" @onclick="() => confirmKey = null" data-testid="credit-cancel-btn">Άκυρο</button>
+                            }
+                            else
+                            {
+                                <button @onclick="() => confirmKey = r.Key" data-testid="credit-start-btn-@r.Key">Ακύρωση (Πιστωτικό)</button>
+                            }
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private sealed record Row(string Key, int OrderId, int? PaymentId, DateTime Time, string Table, string Kind,
+        string Code, long Mark, decimal Amount, string Payment, long? CreditMark);
+
+    private DateTime date = DateTime.Today;
+    private List<Row> rows = new();
+    private string? confirmKey;
+    private string reason = "Ακύρωση απόδειξης";
+    private bool busy;
+    private string? message;
+    private bool messageOk;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var from = date.Date;
+        var to = from.AddDays(1);
+
+        var orders = await db.Orders
+            .Include(o => o.RestaurantTable)
+            .Include(o => o.Items).ThenInclude(i => i.MenuItem)
+            .Include(o => o.Payments)
+            .Where(o => (o.CreatedAt >= from && o.CreatedAt < to) ||
+                        (o.ClosedAt >= from && o.ClosedAt < to) ||
+                        o.Payments.Any(p => p.CreatedAt >= from && p.CreatedAt < to))
+            .ToListAsync();
+
+        var orderIds = orders.Select(o => o.Id).ToList();
+        var credits = await db.FiscalOrderCancellations
+            .Where(c => orderIds.Contains(c.OrderId) && c.ExternalSystemId.StartsWith("credit-") && c.Mark != null)
+            .ToListAsync();
+
+        long? CreditFor(int orderId, int? paymentId) =>
+            credits.FirstOrDefault(c => c.ExternalSystemId.StartsWith(FiscalExternalSystemIds.CreditDocumentPrefix(orderId, paymentId)))?.Mark;
+
+        rows = new();
+        foreach (var o in orders)
+        {
+            var table = o.RestaurantTable?.Name ?? "";
+            if (o.FiscalStatus == FiscalStatus.Issued && o.ParochosMark is long mark)
+            {
+                var amount = o.Items.Where(i => !i.IsCancelled).Sum(i => i.Quantity * ((i.MenuItem?.Price ?? 0) + i.ExtrasPrice));
+                rows.Add(new Row($"o{o.Id}", o.Id, null, o.ClosedAt ?? o.CreatedAt, table, KindName(o.DocumentKind),
+                    $"{o.InvoiceSeriesName} {o.InvoiceNumber}", mark, amount, PayName(o.PaymentMethod), CreditFor(o.Id, null)));
+            }
+            foreach (var p in o.Payments.Where(p => p.Mark != null && p.CreatedAt >= from && p.CreatedAt < to))
+            {
+                rows.Add(new Row($"p{p.Id}", o.Id, p.Id, p.CreatedAt, table, KindName(p.DocumentKind),
+                    $"{p.SeriesName} {p.InvoiceNumber}", p.Mark!.Value, p.Amount, PayName(p.PaymentMethod), CreditFor(o.Id, p.Id)));
+            }
+        }
+        rows = rows.Where(r => r.Time >= from && r.Time < to).OrderByDescending(r => r.Time).ToList();
+    }
+
+    private async Task CreditAsync(Row r)
+    {
+        busy = true;
+        message = null;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var result = await Fiscal.CreditIssuedDocumentAsync(db, r.OrderId, r.PaymentId, reason);
+            messageOk = result.Success;
+            if (result.Success)
+            {
+                var printed = await PrintCreditDocumentAsync(db, r, result);
+                message = printed
+                    ? $"Εκδόθηκε και εκτυπώθηκε πιστωτικό με MARK {result.Mark} για το παραστατικό {r.Code}."
+                    : $"Εκδόθηκε πιστωτικό με MARK {result.Mark}, αλλά δεν εκτυπώθηκε. Έλεγξε τον εκτυπωτή· μην επαναλάβεις την ακύρωση. {r.Code}.";
+            }
+            else
+            {
+                message = $"Αποτυχία ακύρωσης: {result.ErrorMessage}";
+            }
+            confirmKey = null;
+            await LoadAsync();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task<bool> PrintCreditDocumentAsync(AppDbContext db, Row row, FiscalIssueResult result)
+    {
+        var order = await db.Orders.AsNoTracking()
+            .Include(o => o.RestaurantTable)
+            .Include(o => o.Items).ThenInclude(i => i.MenuItem).ThenInclude(m => m!.MenuCategory).ThenInclude(c => c!.PrinterStations)
+            .Include(o => o.Items).ThenInclude(i => i.MenuItem).ThenInclude(m => m!.MenuCategory).ThenInclude(c => c!.PrinterStation)
+            .Include(o => o.Payments).ThenInclude(p => p.Items)
+            .FirstOrDefaultAsync(o => o.Id == row.OrderId);
+        if (order is null || result.SeriesName is null || result.InvoiceNumber is null)
+            return false;
+
+        List<(OrderItem Item, int Quantity)> selectedItems;
+        if (row.PaymentId is int paymentId)
+        {
+            var payment = order.Payments.FirstOrDefault(p => p.Id == paymentId);
+            if (payment is null) return false;
+            selectedItems = payment.Items
+                .Select(pi => (Item: order.Items.FirstOrDefault(i => i.Id == pi.OrderItemId), pi.Quantity))
+                .Where(x => x.Item is not null && x.Quantity > 0)
+                .Select(x => (x.Item!, x.Quantity))
+                .ToList();
+        }
+        else
+        {
+            selectedItems = order.Items
+                .Where(i => !i.IsCancelled && i.Quantity > 0)
+                .Select(i => (i, i.Quantity))
+                .ToList();
+        }
+
+        if (selectedItems.Count == 0) return false;
+        var printItems = selectedItems.Select(x => (
+            ItemName: x.Item.MenuItem?.Name ?? "Είδος",
+            Quantity: x.Quantity,
+            LineTotal: x.Quantity * ((x.Item.MenuItem?.Price ?? 0m) + x.Item.ExtrasPrice),
+            VatPercent: x.Item.MenuItem?.VatPercentOverride ?? x.Item.MenuItem?.MenuCategory?.VatPercent ?? 24m)).ToList();
+        var total = printItems.Sum(i => i.LineTotal);
+        var stations = selectedItems
+            .SelectMany(x =>
+            {
+                var category = x.Item.MenuItem?.MenuCategory;
+                var printers = category?.PrinterStations?.ToList() ?? new List<PrinterStation>();
+                if (category?.PrinterStation is not null && printers.All(p => p.Id != category.PrinterStation.Id))
+                    printers.Add(category.PrinterStation);
+                return printers;
+            })
+            .Where(p => p.PrintFiscalDocuments)
+            .DistinctBy(p => p.Id)
+            .ToList();
+        if (stations.Count == 0) return false;
+
+        var settings = await db.CompanySettings.AsNoTracking().FirstOrDefaultAsync();
+        var isInvoice = row.Kind == "Τιμολόγιο";
+        var documentLabel = isInvoice ? "ΠΙΣΤΩΤΙΚΟ ΤΙΜΟΛΟΓΙΟ" : "ΠΙΣΤΩΤΙΚΟ ΣΤΟΙΧΕΙΟ ΛΙΑΝΙΚΗΣ";
+        var success = true;
+        foreach (var station in stations)
+        {
+            var printed = await Printer.PrintFiscalReceiptAsync(
+                station,
+                order.RestaurantTable?.Name ?? row.Table,
+                "Ακύρωση παραστατικού",
+                documentLabel,
+                result.SeriesName,
+                result.InvoiceNumber.Value,
+                result.Mark,
+                result.QrCode,
+                printItems,
+                total,
+                settings,
+                order,
+                row.PaymentId,
+                "ΑΝΤΙΓΡΑΦΟ / ΑΚΥΡΩΣΗ");
+            success &= printed;
+        }
+        return success;
+    }
+
+    private static string PayName(PaymentMethod m) => PaymentMethodInfo.DisplayName(m);
+
+    private static string KindName(FiscalDocumentKind? kind) =>
+        kind == FiscalDocumentKind.Invoice ? "Τιμολόγιο" : "Απόδειξη";
+}

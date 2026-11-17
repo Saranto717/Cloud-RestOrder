@@ -1,0 +1,13 @@
+{
+  "appId": "gr.restaurantorders.sunmiclient",
+  "appName": "RestaurantOrders SUNMI",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true,
+    "allowNavigation": ["*"]
+  },
+  "plugins": {
+    "SunmiPrinter": { "bindOnLoad": true }
+  }
+}

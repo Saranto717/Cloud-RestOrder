@@ -1,0 +1,738 @@
+@page "/admin/menu"
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<h2>Κατάλογος (Είδη)</h2>
+<p class="hint">Για αλλαγή ονόματος ή τιμής, πάτησε «Επεξεργασία» στη γραμμή του είδους. Οι κατηγορίες που σημειώνονται ως ανενεργές δεν εμφανίζονται κατά τη λήψη παραγγελίας.</p>
+
+<style>
+    .catalog-quick-card { margin:18px 0 24px; padding:22px; border:1px solid #dbe3ef; border-radius:18px; background:linear-gradient(145deg,#fff,#f4f7fc); box-shadow:0 8px 24px rgba(31,42,68,.07); }
+    .catalog-quick-card h3 { margin:0 0 6px; color:#1f2a44; font-size:1.25rem; }
+    .catalog-quick-step { margin:16px 0 8px; color:#5f6d83; font-size:.85rem; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }
+    .catalog-category-choices { display:flex; flex-wrap:wrap; gap:9px; }
+    .catalog-category-choice { min-height:44px; padding:10px 16px; border:1px solid #d4ddeb; border-radius:12px; background:#fff; color:#24324b; font:inherit; font-weight:750; cursor:pointer; }
+    .catalog-category-choice.active { border-color:#1f2a44; background:#1f2a44; color:#fff; }
+    .catalog-category-choice.new { border-style:dashed; color:#2563a6; }
+    .catalog-product-entry { display:grid; grid-template-columns:minmax(160px,1fr) 140px auto; gap:10px; margin-top:12px; align-items:end; }
+    .catalog-product-entry label { display:grid; gap:5px; color:#59677e; font-size:.86rem; font-weight:700; }
+    .catalog-product-entry input { min-height:46px; width:100%; padding:10px 12px; border:1px solid #cdd6e3; border-radius:10px; box-sizing:border-box; font:inherit; }
+    .catalog-product-entry button { min-height:46px; padding:10px 18px; border:0; border-radius:10px; background:#23813b; color:white; font:inherit; font-weight:800; cursor:pointer; }
+    .catalog-new-category { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+    .catalog-new-category input { min-height:42px; padding:8px 11px; border:1px solid #cdd6e3; border-radius:10px; font:inherit; }
+    .catalog-secondary { margin:18px 0; border:1px solid #dbe3ef; border-radius:12px; background:#fff; }
+    .catalog-secondary summary { padding:14px 16px; color:#34425e; font-weight:750; cursor:pointer; }
+    .catalog-secondary-content { padding:0 16px 16px; }
+    .catalog-items-hint { margin-top:-8px; }
+    .catalog-category-list { display:grid; gap:10px; margin:12px 0 18px; }
+    .catalog-category-panel { overflow:hidden; border:1px solid #d7e0ec; border-radius:14px; background:#fff; box-shadow:0 3px 12px rgba(31,42,68,.05); }
+    .catalog-category-toggle { display:grid; grid-template-columns:26px minmax(0,1fr) auto auto; align-items:center; gap:10px; width:100%; min-height:58px; padding:10px 14px; border:0; background:linear-gradient(100deg,#f6f9fd,#edf3fa); color:#1f2a44; text-align:left; font:inherit; cursor:pointer; }
+    .catalog-category-toggle:hover { background:#e9f1fb; }
+    .catalog-category-toggle[aria-expanded="true"] { background:linear-gradient(100deg,#e8f1fc,#dfeaf7); }
+    .catalog-category-chevron { display:grid; place-items:center; width:25px; height:25px; border-radius:50%; background:#dce8f6; color:#23466f; font-size:1.2rem; font-weight:900; }
+    .catalog-category-name { overflow:hidden; font-weight:850; text-overflow:ellipsis; white-space:nowrap; }
+    .catalog-category-inactive { margin-left:8px; color:#78869a; font-size:.78rem; font-weight:700; }
+    .catalog-category-count { padding:4px 10px; border-radius:999px; background:#fff; color:#415570; font-size:.83rem; font-weight:800; white-space:nowrap; }
+    .catalog-category-selected { color:#17633c; font-size:.8rem; font-weight:750; white-space:nowrap; }
+    .catalog-category-content { padding:10px; border-top:1px solid #e3e9f1; }
+    .catalog-category-table-wrap { overflow-x:auto; }
+    .catalog-category-table-wrap .admin-table { min-width:900px; }
+    .catalog-category-empty { margin:0; padding:18px; border-radius:10px; background:#f8fafc; color:#718096; }
+    .catalog-bulk-hint { flex-basis:100%; margin:0; }
+    @@media(max-width:650px) { .catalog-product-entry { grid-template-columns:1fr 1fr; } .catalog-product-entry label:first-child { grid-column:1/-1; } .catalog-product-entry button { grid-column:1/-1; } }
+    @@media(max-width:650px) { .catalog-category-toggle { grid-template-columns:24px minmax(0,1fr) auto; gap:7px; padding:9px; } .catalog-category-selected { grid-column:2/-1; } .catalog-category-content { padding:6px; } }
+</style>
+
+<section class="catalog-quick-card">
+    <h3>Γρήγορη προσθήκη</h3>
+    <p class="hint" style="margin:0">Διάλεξε κατηγορία και πρόσθεσε τα προϊόντα ένα-ένα. Η κατηγορία μένει επιλεγμένη.</p>
+    <div class="catalog-quick-step">1 · Κατηγορία</div>
+    <div class="catalog-category-choices">
+        @foreach (var c in categories.Where(x => x.IsActive))
+        {
+            <button type="button" class="catalog-category-choice @(quickCategoryId == c.Id ? "active" : "")" @onclick="() => quickCategoryId = c.Id">@c.Name</button>
+        }
+        <button type="button" class="catalog-category-choice new" @onclick="() => showQuickNewCategory = !showQuickNewCategory">＋ Νέα κατηγορία</button>
+    </div>
+    @if (showQuickNewCategory)
+    {
+        <form class="catalog-new-category" @onsubmit="AddQuickCategory" @onsubmit:preventDefault="true">
+            <input @bind="quickCategoryName" placeholder="Όνομα νέας κατηγορίας" aria-label="Όνομα νέας κατηγορίας" />
+            <button type="submit">Δημιουργία κατηγορίας</button>
+        </form>
+    }
+    <div class="catalog-quick-step">2 · Προϊόν @(categories.FirstOrDefault(c => c.Id == quickCategoryId)?.Name is string selectedName ? $"— {selectedName}" : "— επίλεξε πρώτα κατηγορία")</div>
+    <form class="catalog-product-entry" @onsubmit="AddQuickProduct" @onsubmit:preventDefault="true">
+        <label>Όνομα προϊόντος<input @bind="quickProductName" placeholder="π.χ. Freddo Espresso" autocomplete="off" /></label>
+        <label>Τιμή (€)<input @bind="quickProductPrice" inputmode="decimal" placeholder="π.χ. 3,00" /></label>
+        <label>Τιμή ιδιοκατανάλωσης (€)<input @bind="quickConsumptionPrice" inputmode="decimal" /></label>
+        <button type="submit" disabled="@(quickCategoryId == 0 || string.IsNullOrWhiteSpace(quickProductName))">＋ Προσθήκη είδους</button>
+    </form>
+    @if (!string.IsNullOrWhiteSpace(quickProductMessage)) { <p class="success" style="margin:12px 0 0">@quickProductMessage</p> }
+</section>
+
+<details class="catalog-secondary">
+<summary>Περισσότερες επιλογές: μαζική προσθήκη ή Excel</summary>
+<div class="catalog-secondary-content">
+<h3>Προσθήκη ενός είδους</h3>
+<div class="admin-form">
+    <input @bind="newName" placeholder="Όνομα είδους" />
+    <input @bind="newPrice" placeholder="Τιμή" />
+    <input @bind="newConsumptionPrice" inputmode="decimal" aria-label="Τιμή ιδιοκατανάλωσης" />
+    <select @bind="newCategoryId">
+        <option value="0">-- Χωρίς κατηγορία (όρισε αργότερα) --</option>
+        @foreach (var c in categories)
+        {
+            <option value="@c.Id">@(c.IsActive ? c.Name : $"{c.Name} (ανενεργή)")</option>
+        }
+    </select>
+    <button @onclick="Add">Προσθήκη</button>
+</div>
+
+<h3>Μαζική προσθήκη πολλών ειδών</h3>
+<p class="hint">
+    Γράψε ένα είδος ανά γραμμή. Προαιρετικά βάλε την τιμή μετά από ; (π.χ. <code>Freddo Espresso;2.50</code>).
+    Χωρίς τιμή, μπαίνει 0 — μπορείς να τη διορθώσεις μετά. Η κατηγορία (αν διαλέξεις) εφαρμόζεται σε όλα τα είδη της λίστας.
+</p>
+<div class="admin-form quick-add-form">
+    <div class="form-row">
+        <label>Κατηγορία (προαιρετικό, εφαρμόζεται σε όλα)</label>
+        <select @bind="bulkAddCategoryId">
+            <option value="0">-- Χωρίς κατηγορία (όρισε αργότερα) --</option>
+            @foreach (var c in categories)
+            {
+                <option value="@c.Id">@(c.IsActive ? c.Name : $"{c.Name} (ανενεργή)")</option>
+            }
+        </select>
+    </div>
+    <div class="form-row">
+        <label>Είδη (ένα ανά γραμμή)</label>
+        <textarea @bind="bulkAddText" rows="8" placeholder="Freddo Espresso;2.50&#10;Cappuccino;3.00&#10;Σκέτος καφές"></textarea>
+    </div>
+    <button @onclick="BulkAdd">Μαζική προσθήκη</button>
+</div>
+
+@if (!string.IsNullOrEmpty(bulkAddMessage))
+{
+    <p class="success">@bulkAddMessage</p>
+}
+
+<h3>Εισαγωγή από Excel</h3>
+<p class="hint">
+    Υποστηρίζονται κανονικός πίνακας με στήλες προϊόν/κατηγορία/τιμή ή απλή λίστα: γράψε κάθε κατηγορία
+    σε δική της γραμμή και από κάτω τα προϊόντα της, με τις τιμές σε διπλανό κελί ή δίπλα στο όνομα.
+    Πριν από την εισαγωγή θα εμφανιστεί προεπισκόπηση για έλεγχο και διορθώσεις.
+</p>
+<div class="admin-form">
+    <InputFile OnChange="HandleExcelUpload" accept=".xlsx,.xls" />
+</div>
+@if (isImportingExcel)
+{
+    <p class="hint">Ανάγνωση αρχείου...</p>
+}
+@if (!string.IsNullOrEmpty(excelImportMessage))
+{
+    <p class="success">@excelImportMessage</p>
+}
+@if (excelImportWarnings.Count > 0)
+{
+    <div class="hint">
+        <strong>Έλεγχος εισαγωγής</strong>
+        <ul>
+            @foreach (var warning in excelImportWarnings)
+            {
+                <li>@warning</li>
+            }
+        </ul>
+    </div>
+}
+@if (pendingCatalogImport.Count > 0)
+{
+    <div class="bulk-bar">
+        <strong>Προεπισκόπηση: @pendingCatalogImport.Count προϊόντα</strong>
+        <button @onclick="ConfirmExcelImport" disabled="@isImportingExcel">Εισαγωγή προϊόντων</button>
+        <button class="linkbtn-plain" @onclick="CancelExcelImport">Ακύρωση</button>
+    </div>
+    <div style="max-height:420px;overflow:auto">
+        <table class="admin-table">
+            <thead><tr><th>Γραμμή</th><th>Προϊόν</th><th>Κατηγορία</th><th>Τιμή (€)</th></tr></thead>
+            <tbody>
+                @foreach (var preview in pendingCatalogImport)
+                {
+                    <tr>
+                        <td>@preview.SourceRow</td>
+                        <td><input @bind="preview.Name" /></td>
+                        <td><input @bind="preview.CategoryName" placeholder="Χωρίς κατηγορία" /></td>
+                        <td><input type="number" min="0" step="0.01" @bind="preview.Price" style="width:100px" /></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+</div>
+</details>
+
+<h3>Είδη ανά κατηγορία</h3>
+<p class="hint catalog-items-hint">Άνοιξε μία κατηγορία για να δεις και να διαχειριστείς τα είδη της. Οι επιλογές σου παραμένουν όταν κλείνεις την κατηγορία ή ανοίγεις άλλη.</p>
+
+@if (items.Count > 0)
+{
+    <div class="bulk-bar">
+        <label><input type="checkbox" checked="@allSelected" @onchange="ToggleSelectAll" /> Επιλογή όλων των ειδών</label>
+        <span>@selectedIds.Count επιλεγμένα</span>
+        <select @bind="bulkCategoryId">
+            <option value="0">-- Χωρίς κατηγορία --</option>
+            @foreach (var c in categories)
+            {
+                <option value="@c.Id">@(c.IsActive ? c.Name : $"{c.Name} (ανενεργή)")</option>
+            }
+        </select>
+        <button @onclick="ApplyBulkCategory" disabled="@(selectedIds.Count == 0)">Ανάθεση κατηγορίας στα επιλεγμένα</button>
+        <button class="danger" @onclick="DeleteSelected" disabled="@(selectedIds.Count == 0)">Διαγραφή επιλεγμένων</button>
+        <p class="hint catalog-bulk-hint">Οι μαζικές ενέργειες εφαρμόζονται σε όλα τα επιλεγμένα είδη, ακόμη κι αν η κατηγορία τους είναι κλειστή.</p>
+    </div>
+}
+
+@if (ItemGroups.Count > 0)
+{
+    <div class="catalog-category-list">
+        @foreach (var group in ItemGroups)
+        {
+            var isOpen = openCategoryKey == group.Key;
+            var selectedInGroup = group.Items.Count(i => selectedIds.Contains(i.Id));
+            <section class="catalog-category-panel">
+                <button type="button" class="catalog-category-toggle" aria-expanded="@isOpen" aria-controls="@group.ContentId" @onclick="() => ToggleCategory(group.Key)">
+                    <span class="catalog-category-chevron" aria-hidden="true">@(isOpen ? "−" : "+")</span>
+                    <span class="catalog-category-name">
+                        @group.Name
+                        @if (!group.IsActive) { <span class="catalog-category-inactive">Ανενεργή</span> }
+                    </span>
+                    <span class="catalog-category-count">@group.Items.Count είδη</span>
+                    @if (selectedInGroup > 0) { <span class="catalog-category-selected">@selectedInGroup επιλεγμένα</span> }
+                </button>
+                @if (isOpen)
+                {
+                    <div id="@group.ContentId" class="catalog-category-content">
+                        @if (group.Items.Count == 0)
+                        {
+                            <p class="catalog-category-empty">Δεν υπάρχουν είδη σε αυτή την κατηγορία.</p>
+                        }
+                        else
+                        {
+                            <div class="catalog-category-table-wrap">
+                                <table class="admin-table">
+                                    <thead><tr><th></th><th>Είδος</th><th>Κατηγορία</th><th>Τιμή</th><th>Ιδιοκατανάλωση</th><th>ΦΠΑ %</th><th>Μονάδα myDATA</th><th>Διαθέσιμο</th><th></th></tr></thead>
+                                    <tbody>
+                                        @foreach (var i in group.Items)
+                                        {
+                                            @if (editingId == i.Id)
+                                            {
+                                                <tr>
+                                                    <td></td>
+                                                    <td><input @bind="editName" /></td>
+                                                    <td>
+                                                        <select @bind="editCategoryId">
+                                                            <option value="0">-- Χωρίς κατηγορία --</option>
+                                                            @foreach (var c in categories)
+                                                            {
+                                                                <option value="@c.Id">@(c.IsActive ? c.Name : $"{c.Name} (ανενεργή)")</option>
+                                                            }
+                                                        </select>
+                                                    </td>
+                                                    <td><input @bind="editPrice" style="width:70px" /></td>
+                                                    <td><input @bind="editConsumptionPrice" inputmode="decimal" style="width:70px" aria-label="Τιμή ιδιοκατανάλωσης" /></td>
+                                                    <td></td>
+                                                    <td><select value="@i.MeasurementUnitCode" @onchange="e => UpdateMeasurementUnit(i, e)"><option value="1">Τεμάχια</option><option value="2">Κιλά</option><option value="3">Λίτρα</option></select></td>
+                                                    <td><input type="checkbox" checked="@i.IsAvailable" @onchange="e => ToggleAvailable(i, e)" /></td>
+                                                    <td>
+                                                        <button @onclick="() => SaveEdit(i)">Αποθήκευση</button>
+                                                        <button @onclick="CancelEdit">Άκυρο</button>
+                                                    </td>
+                                                </tr>
+                                            }
+                                            else
+                                            {
+                                                <tr>
+                                                    <td><input type="checkbox" checked="@selectedIds.Contains(i.Id)" @onchange="e => ToggleSelect(i.Id, e)" /></td>
+                                                    <td>@i.Name</td>
+                                                    <td>
+                                                        <select value="@(i.MenuCategoryId ?? 0)" @onchange="e => ChangeItemCategory(i, e)" aria-label="Κατηγορία για @i.Name">
+                                                            <option value="0">Χωρίς κατηγορία</option>
+                                                            @foreach (var c in categories)
+                                                            {
+                                                                <option value="@c.Id">@(c.IsActive ? c.Name : $"{c.Name} (ανενεργή)")</option>
+                                                            }
+                                                        </select>
+                                                    </td>
+                                                    <td>€@i.Price.ToString("0.00")</td>
+                                                    <td>€@i.StaffConsumptionPrice.ToString("0.00")</td>
+                                                    <td>
+                                                        <input value="@i.VatPercentOverride?.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                                                               @onchange="e => UpdateVatOverride(i, e)"
+                                                               placeholder="@(i.MenuCategory?.VatPercent.ToString() ?? "24")"
+                                                               style="width:55px" />
+                                                    </td>
+                                                    <td><select value="@i.MeasurementUnitCode" @onchange="e => UpdateMeasurementUnit(i, e)"><option value="1">Τεμάχια</option><option value="2">Κιλά</option><option value="3">Λίτρα</option></select></td>
+                                                    <td><input type="checkbox" checked="@i.IsAvailable" @onchange="e => ToggleAvailable(i, e)" /></td>
+                                                    <td>
+                                                        <button @onclick="() => StartEdit(i)">Επεξεργασία</button>
+                                                        <button class="danger" @onclick="() => Delete(i)">Διαγραφή</button>
+                                                    </td>
+                                                </tr>
+                                            }
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                }
+            </section>
+        }
+    </div>
+}
+<p class="hint">Άδειο πεδίο ΦΠΑ = κληρονομεί το ΦΠΑ της κατηγορίας του (φαίνεται σαν placeholder). Συμπλήρωσέ το μόνο αν αυτό το συγκεκριμένο είδος έχει διαφορετικό συντελεστή.</p>
+<p class="hint">Η μονάδα myDATA ξεκινά πάντα ως «Τεμάχια». Άλλαξέ την μόνο για είδη που πωλούνται σε κιλά ή λίτρα.</p>
+
+@code {
+    private List<MenuItem> items = new();
+    private List<MenuCategory> categories = new();
+    private string newName = "";
+    private string newPrice = "";
+    private string newConsumptionPrice = "0,10";
+    private int newCategoryId = 0;
+
+    private int bulkAddCategoryId = 0;
+    private string bulkAddText = "";
+    private string? bulkAddMessage;
+    private int quickCategoryId;
+    private string quickCategoryName = "";
+    private string quickProductName = "";
+    private string quickProductPrice = "";
+    private string quickConsumptionPrice = "0,10";
+    private string? quickProductMessage;
+    private bool showQuickNewCategory;
+
+    private bool isImportingExcel;
+    private string? excelImportMessage;
+    private List<ExcelImportService.CatalogImportPreviewItem> pendingCatalogImport = new();
+    private List<string> excelImportWarnings = new();
+
+    private int bulkCategoryId = 0;
+    private HashSet<int> selectedIds = new();
+    private bool allSelected => items.Count > 0 && selectedIds.Count == items.Count;
+    private string? openCategoryKey;
+
+    private int? editingId;
+    private string editName = "";
+    private string editPrice = "";
+    private string editConsumptionPrice = "0,10";
+    private int editCategoryId = 0;
+
+    private sealed record ItemCategoryGroup(int? CategoryId, string Name, bool IsActive, List<MenuItem> Items)
+    {
+        public string Key => CategoryId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "uncategorized";
+        public string ContentId => $"menu-category-{Key}";
+    }
+
+    private List<ItemCategoryGroup> ItemGroups => categories
+        .Select(category => new ItemCategoryGroup(
+            category.Id,
+            category.Name,
+            category.IsActive,
+            items.Where(item => item.MenuCategoryId == category.Id).ToList()))
+        .Append(new ItemCategoryGroup(
+            null,
+            "Χωρίς κατηγορία",
+            true,
+            items.Where(item => item.MenuCategoryId is null).ToList()))
+        .Where(group => group.CategoryId.HasValue || group.Items.Count > 0)
+        .ToList();
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private void ToggleCategory(string categoryKey) =>
+        openCategoryKey = openCategoryKey == categoryKey ? null : categoryKey;
+
+    private async Task Load()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        items = await db.MenuItems.Include(i => i.MenuCategory).OrderBy(i => i.Name).ToListAsync();
+        categories = await db.MenuCategories.OrderBy(c => c.Name).ToListAsync();
+        selectedIds.RemoveWhere(id => items.All(i => i.Id != id));
+    }
+
+    private static decimal ParsePrice(string raw)
+    {
+        decimal.TryParse(raw.Replace(",", "."),
+            System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var price);
+        return price;
+    }
+
+    private static bool TryParseConsumptionPrice(string raw, out decimal price) =>
+        decimal.TryParse(raw.Trim().Replace(",", "."), System.Globalization.NumberStyles.AllowDecimalPoint,
+            System.Globalization.CultureInfo.InvariantCulture, out price) && price >= 0;
+
+    private async Task Add()
+    {
+        if (string.IsNullOrWhiteSpace(newName)) return;
+        if (!TryParseConsumptionPrice(newConsumptionPrice, out var consumptionPrice)) { quickProductMessage = "Συμπλήρωσε έγκυρη μη αρνητική τιμή ιδιοκατανάλωσης."; return; }
+        var price = ParsePrice(newPrice);
+
+        using var db = await DbFactory.CreateDbContextAsync();
+        db.MenuItems.Add(new MenuItem
+        {
+            Name = newName.Trim(),
+            Price = price,
+            StaffConsumptionPrice = consumptionPrice,
+            MenuCategoryId = newCategoryId == 0 ? null : newCategoryId,
+            IsAvailable = true
+        });
+        await db.SaveChangesAsync();
+        newName = ""; newPrice = ""; newConsumptionPrice = "0,10"; newCategoryId = 0;
+        await Load();
+    }
+
+    private async Task UpdateMeasurementUnit(MenuItem item, ChangeEventArgs e)
+    {
+        var unitCode = int.TryParse(e.Value?.ToString(), out var parsed) && parsed is >= 1 and <= 3 ? parsed : 1;
+        using var db = await DbFactory.CreateDbContextAsync();
+        var saved = await db.MenuItems.FirstOrDefaultAsync(x => x.Id == item.Id);
+        if (saved is null) return;
+        saved.MeasurementUnitCode = unitCode;
+        await db.SaveChangesAsync();
+        item.MeasurementUnitCode = unitCode;
+    }
+
+    private async Task ChangeItemCategory(MenuItem item, ChangeEventArgs e)
+    {
+        var categoryId = int.TryParse(e.Value?.ToString(), out var parsed) && parsed > 0 ? parsed : (int?)null;
+        using var db = await DbFactory.CreateDbContextAsync();
+        var saved = await db.MenuItems.FirstOrDefaultAsync(x => x.Id == item.Id);
+        if (saved is null) return;
+        saved.MenuCategoryId = categoryId;
+        await db.SaveChangesAsync();
+        await Load();
+    }
+
+    private async Task BulkAdd()
+    {
+        bulkAddMessage = null;
+        var lines = bulkAddText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (lines.Length == 0) return;
+
+        using var db = await DbFactory.CreateDbContextAsync();
+        var count = 0;
+        foreach (var line in lines)
+        {
+            var parts = line.Split(';', 2);
+            var name = parts[0].Trim();
+            if (string.IsNullOrWhiteSpace(name)) continue;
+
+            var price = parts.Length > 1 ? ParsePrice(parts[1]) : 0;
+
+            db.MenuItems.Add(new MenuItem
+            {
+                Name = name,
+                Price = price,
+                MenuCategoryId = bulkAddCategoryId == 0 ? null : bulkAddCategoryId,
+                IsAvailable = true
+            });
+            count++;
+        }
+        await db.SaveChangesAsync();
+
+        bulkAddMessage = $"Προστέθηκαν {count} είδη.";
+        bulkAddText = "";
+        await Load();
+    }
+
+    private async Task AddQuickCategory()
+    {
+        var name = quickCategoryName.Trim();
+        if (name.Length == 0) return;
+        using var db = await DbFactory.CreateDbContextAsync();
+        var existing = await db.MenuCategories.FirstOrDefaultAsync(c => c.Name.ToLower() == name.ToLower());
+        if (existing is not null)
+        {
+            quickCategoryId = existing.Id;
+        }
+        else
+        {
+            var category = new MenuCategory { Name = name };
+            db.MenuCategories.Add(category);
+            await db.SaveChangesAsync();
+            quickCategoryId = category.Id;
+        }
+        quickCategoryName = "";
+        showQuickNewCategory = false;
+        quickProductMessage = existing is null ? $"Η κατηγορία «{name}» δημιουργήθηκε. Πρόσθεσε τώρα τα είδη της." : $"Επιλέχθηκε η κατηγορία «{name}».";
+        await Load();
+    }
+
+    private async Task AddQuickProduct()
+    {
+        if (quickCategoryId == 0 || string.IsNullOrWhiteSpace(quickProductName)) return;
+        if (!TryParseConsumptionPrice(quickConsumptionPrice, out var consumptionPrice)) { quickProductMessage = "Συμπλήρωσε έγκυρη μη αρνητική τιμή ιδιοκατανάλωσης."; return; }
+        using var db = await DbFactory.CreateDbContextAsync();
+        db.MenuItems.Add(new MenuItem
+        {
+            Name = quickProductName.Trim(),
+            Price = Math.Max(0m, ParsePrice(quickProductPrice)),
+            StaffConsumptionPrice = consumptionPrice,
+            MenuCategoryId = quickCategoryId,
+            IsAvailable = true
+        });
+        await db.SaveChangesAsync();
+        var addedName = quickProductName.Trim();
+        quickProductName = "";
+        quickProductPrice = "";
+        quickConsumptionPrice = "0,10";
+        quickProductMessage = $"Το «{addedName}» προστέθηκε. Μπορείς να περάσεις αμέσως το επόμενο.";
+        await Load();
+    }
+
+    private async Task HandleExcelUpload(InputFileChangeEventArgs e)
+    {
+        excelImportMessage = null;
+        excelImportWarnings.Clear();
+        pendingCatalogImport.Clear();
+        isImportingExcel = true;
+        StateHasChanged();
+
+        try
+        {
+            var file = e.File;
+            if (file is null) return;
+
+            using var stream = file.OpenReadStream(maxAllowedSize: 15 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            ms.Position = 0;
+
+            ExcelImportService.CatalogImportParseResult parsed;
+            try
+            {
+                parsed = ExcelImportService.ReadCatalog(ms);
+            }
+            catch (Exception ex)
+            {
+                excelImportMessage = $"Σφάλμα ανάγνωσης αρχείου: {ex.Message}";
+                return;
+            }
+
+            pendingCatalogImport = parsed.Items;
+            excelImportWarnings = parsed.Warnings;
+            excelImportMessage = parsed.Items.Count == 0
+                ? "Δεν βρέθηκαν προϊόντα για εισαγωγή. Έλεγξε το φύλλο και τη μορφή του αρχείου."
+                : $"Βρέθηκαν {parsed.Items.Count} προϊόντα. Έλεγξε και διόρθωσε την προεπισκόπηση πριν από την εισαγωγή.";
+        }
+        catch (Exception ex)
+        {
+            excelImportMessage = $"Απέτυχε η εισαγωγή: {ex.Message}";
+        }
+        finally
+        {
+            isImportingExcel = false;
+        }
+    }
+
+    private async Task ConfirmExcelImport()
+    {
+        var rows = pendingCatalogImport
+            .Where(x => !string.IsNullOrWhiteSpace(x.Name))
+            .ToList();
+        if (rows.Count == 0)
+        {
+            excelImportMessage = "Δεν υπάρχουν προϊόντα με όνομα για εισαγωγή.";
+            return;
+        }
+
+        isImportingExcel = true;
+        try
+        {
+            using var db = await DbFactory.CreateDbContextAsync();
+            var existingCategories = await db.MenuCategories.ToListAsync();
+            var categoriesByName = existingCategories
+                .GroupBy(x => x.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var categoryName in rows.Select(x => x.CategoryName.Trim())
+                         .Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (categoriesByName.ContainsKey(categoryName)) continue;
+                var category = new MenuCategory { Name = categoryName };
+                db.MenuCategories.Add(category);
+                categoriesByName[categoryName] = category;
+            }
+            await db.SaveChangesAsync();
+
+            foreach (var row in rows)
+            {
+                int? categoryId = null;
+                var categoryName = row.CategoryName.Trim();
+                if (categoryName.Length > 0 && categoriesByName.TryGetValue(categoryName, out var category))
+                    categoryId = category.Id;
+
+                db.MenuItems.Add(new MenuItem
+                {
+                    Name = row.Name.Trim(),
+                    Price = Math.Max(0m, row.Price),
+                    MenuCategoryId = categoryId,
+                    IsAvailable = true
+                });
+            }
+
+            await db.SaveChangesAsync();
+            excelImportMessage = $"Εισήχθησαν {rows.Count} προϊόντα από το Excel.";
+            pendingCatalogImport.Clear();
+            excelImportWarnings.Clear();
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            excelImportMessage = $"Απέτυχε η εισαγωγή: {ex.Message}";
+        }
+        finally
+        {
+            isImportingExcel = false;
+        }
+    }
+
+    private void CancelExcelImport()
+    {
+        pendingCatalogImport.Clear();
+        excelImportWarnings.Clear();
+        excelImportMessage = "Η εισαγωγή ακυρώθηκε.";
+    }
+
+    private void StartEdit(MenuItem i)
+    {
+        editingId = i.Id;
+        editName = i.Name;
+        editPrice = i.Price.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+        editConsumptionPrice = i.StaffConsumptionPrice.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+        editCategoryId = i.MenuCategoryId ?? 0;
+    }
+
+    private void CancelEdit()
+    {
+        editingId = null;
+    }
+
+    private async Task SaveEdit(MenuItem i)
+    {
+        if (string.IsNullOrWhiteSpace(editName)) return;
+        if (!TryParseConsumptionPrice(editConsumptionPrice, out var consumptionPrice)) { quickProductMessage = "Συμπλήρωσε έγκυρη μη αρνητική τιμή ιδιοκατανάλωσης."; return; }
+
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.MenuItems.FindAsync(i.Id);
+        if (entity is not null)
+        {
+            entity.Name = editName.Trim();
+            entity.Price = ParsePrice(editPrice);
+            entity.StaffConsumptionPrice = consumptionPrice;
+            entity.MenuCategoryId = editCategoryId == 0 ? null : editCategoryId;
+            await db.SaveChangesAsync();
+        }
+
+        editingId = null;
+        await Load();
+    }
+
+    private void ToggleSelect(int id, ChangeEventArgs e)
+    {
+        if ((bool)(e.Value ?? false)) selectedIds.Add(id);
+        else selectedIds.Remove(id);
+    }
+
+    private void ToggleSelectAll(ChangeEventArgs e)
+    {
+        if ((bool)(e.Value ?? false)) selectedIds = items.Select(i => i.Id).ToHashSet();
+        else selectedIds.Clear();
+    }
+
+    private async Task ApplyBulkCategory()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var toUpdate = await db.MenuItems.Where(i => selectedIds.Contains(i.Id)).ToListAsync();
+        foreach (var i in toUpdate)
+        {
+            i.MenuCategoryId = bulkCategoryId == 0 ? null : bulkCategoryId;
+        }
+        await db.SaveChangesAsync();
+        await Load();
+    }
+
+    private async Task DeleteSelected()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var toDelete = await db.MenuItems.Where(i => selectedIds.Contains(i.Id)).ToListAsync();
+        db.MenuItems.RemoveRange(toDelete);
+        await db.SaveChangesAsync();
+        selectedIds.Clear();
+        await Load();
+    }
+
+    private async Task UpdateVatOverride(MenuItem i, ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString()?.Trim();
+
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.MenuItems.FindAsync(i.Id);
+        if (entity is not null)
+        {
+            if (string.IsNullOrEmpty(raw))
+            {
+                entity.VatPercentOverride = null;
+            }
+            else if (decimal.TryParse(raw.Replace(",", "."), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var vat))
+            {
+                if (ResolveVatCategoryCode(vat) == "—") return;
+                entity.VatPercentOverride = vat;
+                entity.VatCategoryCodeOverride = ResolveVatCategoryCode(vat);
+            }
+            await db.SaveChangesAsync();
+        }
+        await Load();
+    }
+
+    private static string ResolveVatCategoryCode(decimal vat) => vat switch
+    {
+        24m => "1",
+        13m => "2",
+        6m => "3",
+        17m => "4",
+        9m => "5",
+        4m => "6",
+        3m => "9",
+        0m => "7",
+        _ => "—"
+    };
+
+    private async Task ToggleAvailable(MenuItem i, ChangeEventArgs e)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.MenuItems.FindAsync(i.Id);
+        if (entity is not null)
+        {
+            entity.IsAvailable = (bool)(e.Value ?? false);
+            await db.SaveChangesAsync();
+        }
+        await Load();
+    }
+
+    private async Task Delete(MenuItem i)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.MenuItems.FindAsync(i.Id);
+        if (entity is not null)
+        {
+            db.MenuItems.Remove(entity);
+            await db.SaveChangesAsync();
+        }
+        await Load();
+    }
+}

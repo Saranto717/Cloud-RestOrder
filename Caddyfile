@@ -1,0 +1,4 @@
+texn-support.ddns.net {
+	encode zstd gzip
+	reverse_proxy cloud-api:8080
+}

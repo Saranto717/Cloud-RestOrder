@@ -1,0 +1,342 @@
+@page "/admin/reprint"
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject PrinterService Printer
+
+<h2>Επανεκτύπωση</h2>
+<p class="hint">Επίλεξε ημερομηνίες και είδος παραστατικού. Η εκτύπωση χρησιμοποιεί τους εκτυπωτές που έχουν αντιστοιχιστεί στις κατηγορίες των ειδών.</p>
+
+<div class="admin-form quick-add-form">
+    <div class="form-row"><label>Από</label><input type="date" @bind="fromDate" @bind:after="LoadAsync" /></div>
+    <div class="form-row"><label>Έως</label><input type="date" @bind="toDate" @bind:after="LoadAsync" /></div>
+    <div class="form-row">
+        <label>Είδος</label>
+        <select @bind="selectedType" @bind:after="LoadAsync">
+            <option value="all">Όλα</option>
+            <option value="receipt">Απόδειξη</option>
+            <option value="invoice">Τιμολόγιο</option>
+            <option value="order-form">Δελτίο Παραγγελίας</option>
+            <option value="credit-receipt">Ακυρωτικό Απόδειξης</option>
+            <option value="credit-invoice">Ακυρωτικό Τιμολογίου</option>
+            <option value="cancel-order-form">Ακυρωτικό Δελτίου Παραγγελίας</option>
+        </select>
+    </div>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <p class="@(messageIsError ? "error" : "hint")">@message</p>
+}
+
+@if (rows.Count == 0)
+{
+    <p class="hint">Δεν βρέθηκαν εκδοθέντα παραστατικά για τα επιλεγμένα φίλτρα.</p>
+}
+else
+{
+    <table class="admin-table">
+        <thead><tr><th>Ημερομηνία</th><th>Είδος</th><th>Τραπέζι</th><th>Σειρά / ΑΑ</th><th>MARK</th><th>Ποσό</th><th>Κατάσταση</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var row in rows)
+            {
+                <tr>
+                    <td>@row.IssuedAt.ToString("dd/MM/yyyy HH:mm")</td>
+                    <td>@row.TypeName</td>
+                    <td>@row.TableName</td>
+                    <td>@row.SeriesName @(row.Number?.ToString() ?? "")</td>
+                    <td>@row.Mark</td>
+                    <td>@row.Amount.ToString("0.00") €</td>
+                    <td>@(row.WasCancelled ? "Ακυρωμένο" : "Εκδόθηκε")</td>
+                    <td><button disabled="@busy" @onclick="() => ReprintDocument(row)">@(busy ? "Εκτύπωση…" : "Επανεκτύπωση")</button></td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private sealed record ReprintRow(
+        string Key, string TypeKey, string TypeName, DateTime IssuedAt, int OrderId,
+        int? PaymentId, int? FiscalDocumentId, int? CancellationId, string SeriesName,
+        long? Number, long Mark, string TableName, decimal Amount, string? QrCode, bool WasCancelled);
+
+    private DateTime fromDate = DateTime.Today.AddDays(-30);
+    private DateTime toDate = DateTime.Today;
+    private string selectedType = "all";
+    private List<ReprintRow> rows = new();
+    private bool busy;
+    private bool messageIsError;
+    private string? message;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var from = fromDate.Date;
+        var to = toDate.Date.AddDays(1);
+        if (to <= from) to = from.AddDays(1);
+
+        var orders = await db.Orders.AsNoTracking()
+            .Include(o => o.RestaurantTable)
+            .Include(o => o.Items).ThenInclude(i => i.MenuItem).ThenInclude(m => m!.MenuCategory).ThenInclude(c => c!.PrinterStations)
+            .Include(o => o.Items).ThenInclude(i => i.MenuItem).ThenInclude(m => m!.MenuCategory).ThenInclude(c => c!.PrinterStation)
+            .Include(o => o.Payments).ThenInclude(p => p.Items)
+            .Where(o => (o.CreatedAt >= from && o.CreatedAt < to) || (o.ClosedAt >= from && o.ClosedAt < to) ||
+                        o.Payments.Any(p => p.CreatedAt >= from && p.CreatedAt < to))
+            .ToListAsync();
+        var byId = orders.ToDictionary(o => o.Id);
+        var loaded = new List<ReprintRow>();
+
+        foreach (var order in orders)
+        {
+            var tableName = order.RestaurantTable?.Name ?? "";
+            if (order.FiscalStatus == FiscalStatus.Issued && order.ParochosMark is long orderMark &&
+                order.ClosedAt is DateTime closedAt && closedAt >= from && closedAt < to)
+            {
+                var key = order.DocumentKind == FiscalDocumentKind.Invoice ? "invoice" : "receipt";
+                loaded.Add(new($"o{order.Id}", key, TypeName(key), closedAt, order.Id, null, null, null,
+                    order.InvoiceSeriesName ?? "", order.InvoiceNumber, orderMark, tableName,
+                    order.Items.Where(i => !i.IsCancelled).Sum(ItemTotal), order.ParochosQrCode, false));
+            }
+
+            foreach (var payment in order.Payments.Where(p => p.Mark.HasValue && p.CreatedAt >= from && p.CreatedAt < to))
+            {
+                var key = payment.DocumentKind == FiscalDocumentKind.Invoice ? "invoice" : "receipt";
+                loaded.Add(new($"p{payment.Id}", key, TypeName(key), payment.CreatedAt, order.Id, payment.Id, null, null,
+                    payment.SeriesName ?? "", payment.InvoiceNumber, payment.Mark!.Value, tableName, payment.Amount, payment.QrCode, false));
+            }
+        }
+
+        var fiscalDocuments = await db.FiscalOrderDocuments.AsNoTracking()
+            .Include(f => f.Order).ThenInclude(o => o!.RestaurantTable)
+            .Include(f => f.Items).ThenInclude(i => i.OrderItem).ThenInclude(i => i!.MenuItem).ThenInclude(m => m!.MenuCategory)
+            .Where(f => f.Mark != null && f.IssuedAt >= from && f.IssuedAt < to)
+            .ToListAsync();
+        foreach (var form in fiscalDocuments)
+        {
+            var isCancellation = form.IsCancellation || form.ExternalSystemId.StartsWith("orderform-neg-", StringComparison.OrdinalIgnoreCase);
+            var key = isCancellation ? "cancel-order-form" : "order-form";
+            var amount = form.Items.Sum(i => i.OrderItem is null ? 0m : ItemTotal(i.OrderItem, i.Quantity));
+            loaded.Add(new($"f{form.Id}", key, TypeName(key), form.IssuedAt, form.OrderId, null, form.Id, null,
+                form.SeriesName, form.Number, form.Mark!.Value, form.Order?.RestaurantTable?.Name ?? "", amount,
+                form.QrCode, form.IsCancelled));
+        }
+
+        var cancellations = await db.FiscalOrderCancellations.AsNoTracking()
+            .Where(c => c.Mark != null && c.CreatedAt >= from && c.CreatedAt < to)
+            .ToListAsync();
+        foreach (var cancellation in cancellations)
+        {
+            if (!byId.TryGetValue(cancellation.OrderId, out var order)) continue;
+            var key = ResolveCancellationType(cancellation, order);
+            if (key is null) continue;
+            var paymentId = ResolvePaymentId(cancellation);
+            var amount = paymentId is int pid
+                ? order.Payments.FirstOrDefault(p => p.Id == pid)?.Amount ?? 0m
+                : order.Items.Where(i => !i.IsCancelled).Sum(ItemTotal);
+            var (series, number) = ResolveSeriesAndNumber(cancellation);
+            loaded.Add(new($"c{cancellation.Id}", key, TypeName(key), cancellation.CreatedAt, cancellation.OrderId,
+                paymentId, null, cancellation.Id, series, number, cancellation.Mark!.Value,
+                order.RestaurantTable?.Name ?? "", amount, cancellation.QrCode, false));
+        }
+
+        rows = loaded.Where(r => selectedType == "all" || r.TypeKey == selectedType)
+            .OrderByDescending(r => r.IssuedAt).ThenByDescending(r => r.Mark).ToList();
+        message = null;
+    }
+
+    private async Task ReprintDocument(ReprintRow row)
+    {
+        busy = true;
+        message = null;
+        messageIsError = false;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var order = await db.Orders.AsNoTracking()
+                .Include(o => o.RestaurantTable)
+                .Include(o => o.Items).ThenInclude(i => i.MenuItem).ThenInclude(m => m!.MenuCategory).ThenInclude(c => c!.PrinterStations)
+                .Include(o => o.Items).ThenInclude(i => i.MenuItem).ThenInclude(m => m!.MenuCategory).ThenInclude(c => c!.PrinterStation)
+                .Include(o => o.Payments).ThenInclude(p => p.Items)
+                .FirstOrDefaultAsync(o => o.Id == row.OrderId);
+            if (order is null) throw new InvalidOperationException("Δεν βρέθηκε η παραγγελία του παραστατικού.");
+
+            var settings = await db.CompanySettings.AsNoTracking().FirstOrDefaultAsync();
+            var relatedDocuments = await db.FiscalOrderDocuments.AsNoTracking()
+                .Where(f => f.OrderId == order.Id && f.Mark != null && !f.IsCancellation && !f.IsCancelled)
+                .OrderBy(f => f.IssuedAt)
+                .Select(f => $"Δελτίο παραγγελίας {f.SeriesName} {f.Number}")
+                .ToListAsync();
+            var printItems = new List<(string ItemName, int Quantity, decimal LineTotal, decimal VatPercent)>();
+            List<PrinterStation>? documentPrinters = null;
+            var isCancellationSlip = row.TypeKey == "cancel-order-form" && row.CancellationId.HasValue;
+            var printTotal = row.Amount;
+            var qrCode = row.QrCode;
+
+            if (row.FiscalDocumentId is int fiscalDocumentId)
+            {
+                var form = await db.FiscalOrderDocuments.AsNoTracking()
+                    .Include(f => f.Order).ThenInclude(o => o!.RestaurantTable)
+                    .Include(f => f.Items).ThenInclude(i => i.OrderItem).ThenInclude(i => i!.MenuItem).ThenInclude(m => m!.MenuCategory)
+                    .FirstOrDefaultAsync(f => f.Id == fiscalDocumentId);
+                if (form is null) throw new InvalidOperationException("Δεν βρέθηκε το δελτίο παραγγελίας.");
+                qrCode = form.QrCode;
+                var sign = form.IsCancellation || form.ExternalSystemId.StartsWith("orderform-neg-", StringComparison.OrdinalIgnoreCase) ? -1m : 1m;
+                var linkedItems = new List<OrderItem>();
+                foreach (var link in form.Items.Where(i => i.OrderItem is not null && i.Quantity > 0))
+                {
+                    var item = order.Items.FirstOrDefault(i => i.Id == link.OrderItemId) ?? link.OrderItem!;
+                    linkedItems.Add(item);
+                    printItems.Add((item.MenuItem?.Name ?? "Είδος", link.Quantity,
+                        sign * ItemTotal(item, link.Quantity), item.MenuItem?.VatPercentOverride ?? item.MenuItem?.MenuCategory?.VatPercent ?? 24m));
+                }
+                documentPrinters = PrintersFor(linkedItems);
+                printTotal = printItems.Sum(i => i.LineTotal);
+            }
+            else if (row.CancellationId is int cancellationId)
+            {
+                var cancellation = await db.FiscalOrderCancellations.AsNoTracking().FirstOrDefaultAsync(c => c.Id == cancellationId);
+                if (cancellation is null) throw new InvalidOperationException("Δεν βρέθηκε το ακυρωτικό παραστατικό.");
+                qrCode = cancellation.QrCode;
+                if (row.TypeKey == "cancel-order-form")
+                {
+                    printItems.Add(("Ακύρωση συσχετισμένων δελτίων παραγγελίας", 1, 0m, 0m));
+                    printTotal = 0m;
+                }
+                else
+                {
+                    var selected = SelectItems(order, row.PaymentId);
+                    var sign = row.TypeKey is "credit-receipt" or "credit-invoice" ? -1m : 1m;
+                    printItems.AddRange(ToPrintItems(selected, sign));
+                    printTotal = printItems.Sum(i => i.LineTotal);
+                }
+            }
+            else
+            {
+                var selected = SelectItems(order, row.PaymentId);
+                var sign = row.TypeKey is "credit-receipt" or "credit-invoice" ? -1m : 1m;
+                printItems.AddRange(ToPrintItems(selected, sign));
+                printTotal = printItems.Sum(i => i.LineTotal);
+            }
+
+            var stations = documentPrinters ?? SelectPrinters(order, row.PaymentId, isCancellationSlip);
+            if (stations.Count == 0) throw new InvalidOperationException("Δεν υπάρχουν εκτυπωτές αντιστοιχισμένοι στις κατηγορίες των ειδών.");
+
+            var label = order.StaffConsumptionInvoiceType is "6.1" or "6.2" && row.TypeKey == "receipt" ? "ΣΤΟΙΧΕΙΟ ΙΔΙΟΚΑΤΑΝΑΛΩΣΗΣ" : row.TypeKey switch
+            {
+                "invoice" => "ΤΙΜΟΛΟΓΙΟ",
+                "receipt" => "ΑΠΟΔΕΙΞΗ ΛΙΑΝΙΚΗΣ",
+                "order-form" => "ΔΕΛΤΙΟ ΠΑΡΑΓΓΕΛΙΑΣ",
+                "credit-receipt" => "ΠΙΣΤΩΤΙΚΟ ΣΤΟΙΧΕΙΟ ΛΙΑΝΙΚΗΣ",
+                "credit-invoice" => "ΠΙΣΤΩΤΙΚΟ ΤΙΜΟΛΟΓΙΟ",
+                _ => "ΑΚΥΡΩΤΙΚΟ ΔΕΛΤΙΟ ΠΑΡΑΓΓΕΛΙΑΣ"
+            };
+            var success = true;
+            foreach (var station in stations)
+            {
+                var printed = await Printer.PrintFiscalReceiptAsync(
+                    station, order.RestaurantTable?.Name ?? row.TableName, "Επανεκτύπωση", label,
+                    row.SeriesName, row.Number ?? 0, row.Mark, qrCode, printItems, printTotal,
+                    settings, order, row.PaymentId, "ΑΝΤΙΓΡΑΦΟ / ΕΠΑΝΕΚΤΥΠΩΣΗ", row.IssuedAt, relatedDocuments);
+                success &= printed;
+            }
+
+            messageIsError = !success;
+            message = success
+                ? $"Το {row.TypeName.ToLowerInvariant()} με MARK {row.Mark} στάλθηκε στους εκτυπωτές."
+                : "Η εκτύπωση δεν ολοκληρώθηκε σε όλους τους εκτυπωτές. Έλεγξε τη σύνδεση και τις ρυθμίσεις εκτυπωτών.";
+        }
+        catch (Exception ex)
+        {
+            message = "Αποτυχία επανεκτύπωσης: " + ex.Message;
+            messageIsError = true;
+        }
+        finally { busy = false; }
+    }
+
+    private static List<(OrderItem Item, int Quantity)> SelectItems(Order order, int? paymentId)
+    {
+        if (paymentId is int pid)
+        {
+            var payment = order.Payments.FirstOrDefault(p => p.Id == pid);
+            return payment?.Items
+                .Select(pi => (Item: order.Items.FirstOrDefault(i => i.Id == pi.OrderItemId), pi.Quantity))
+                .Where(x => x.Item is not null && x.Quantity > 0)
+                .Select(x => (x.Item!, x.Quantity)).ToList() ?? new();
+        }
+        return order.Items.Where(i => !i.IsCancelled && i.Quantity > 0).Select(i => (i, i.Quantity)).ToList();
+    }
+
+    private static List<(string ItemName, int Quantity, decimal LineTotal, decimal VatPercent)> ToPrintItems(IEnumerable<(OrderItem Item, int Quantity)> items, decimal sign = 1m) =>
+        items.Select(x => (
+            ItemName: x.Item.MenuItem?.Name ?? "Είδος",
+            Quantity: x.Quantity,
+            LineTotal: sign * ItemTotal(x.Item, x.Quantity),
+            VatPercent: x.Item.MenuItem?.VatPercentOverride ?? x.Item.MenuItem?.MenuCategory?.VatPercent ?? 24m)).ToList();
+
+    private static List<PrinterStation> SelectPrinters(Order order, int? paymentId, bool allItems)
+    {
+        var items = allItems ? order.Items.Select(i => (Item: i, Quantity: i.Quantity)).ToList() : SelectItems(order, paymentId);
+        return PrintersFor(items.Select(x => x.Item));
+    }
+
+    private static List<PrinterStation> PrintersFor(IEnumerable<OrderItem> items)
+    {
+        var printers = new List<PrinterStation>();
+        foreach (var item in items)
+        {
+            var category = item.MenuItem?.MenuCategory;
+            if (category is null) continue;
+            if (category.PrinterStations is not null) printers.AddRange(category.PrinterStations);
+            if (category.PrinterStation is not null) printers.Add(category.PrinterStation);
+        }
+        return printers.Where(p => p.PrintFiscalDocuments).DistinctBy(p => p.Id).ToList();
+    }
+
+    private static decimal ItemTotal(OrderItem item) => ItemTotal(item, item.Quantity);
+    private static decimal ItemTotal(OrderItem item, int quantity) => quantity * ((item.MenuItem?.Price ?? 0m) + item.ExtrasPrice);
+
+    private static string? ResolveCancellationType(FiscalOrderCancellation cancellation, Order order)
+    {
+        if (cancellation.DocumentKind == FiscalDocumentKind.CreditInvoice) return "credit-invoice";
+        if (cancellation.DocumentKind == FiscalDocumentKind.CreditReceipt) return "credit-receipt";
+        if (cancellation.DocumentKind == FiscalDocumentKind.CancelOrderForm || cancellation.ExternalSystemId.StartsWith("cancel-orderform-", StringComparison.OrdinalIgnoreCase))
+            return "cancel-order-form";
+        if (!cancellation.ExternalSystemId.StartsWith("credit-", StringComparison.OrdinalIgnoreCase)) return null;
+        var paymentId = ResolvePaymentId(cancellation);
+        var originalKind = paymentId is int pid
+            ? order.Payments.FirstOrDefault(p => p.Id == pid)?.DocumentKind
+            : order.DocumentKind;
+        return originalKind == FiscalDocumentKind.Invoice ? "credit-invoice" : "credit-receipt";
+    }
+
+    private static int? ResolvePaymentId(FiscalOrderCancellation cancellation)
+    {
+        if (cancellation.PaymentId is int saved) return saved > 0 ? saved : null;
+        if (!cancellation.ExternalSystemId.StartsWith("credit-", StringComparison.OrdinalIgnoreCase)) return null;
+        var pieces = cancellation.ExternalSystemId.Split('-', StringSplitOptions.RemoveEmptyEntries);
+        return pieces.Length > 2 && int.TryParse(pieces[2], out var id) && id > 0 ? id : null;
+    }
+
+    private static (string Series, long? Number) ResolveSeriesAndNumber(FiscalOrderCancellation cancellation)
+    {
+        if (!string.IsNullOrWhiteSpace(cancellation.SeriesName) || cancellation.Number.HasValue)
+            return (cancellation.SeriesName ?? "", cancellation.Number);
+        var match = System.Text.RegularExpressions.Regex.Match(cancellation.Reason ?? "", @"^(.*?)\s+(\d+)\s*\|");
+        return match.Success && long.TryParse(match.Groups[2].Value, out var number)
+            ? (match.Groups[1].Value.Trim(), number) : ("", null);
+    }
+
+    private static string TypeName(string key) => key switch
+    {
+        "receipt" => "Απόδειξη",
+        "invoice" => "Τιμολόγιο",
+        "order-form" => "Δελτίο Παραγγελίας",
+        "credit-receipt" => "Ακυρωτικό Απόδειξης",
+        "credit-invoice" => "Ακυρωτικό Τιμολογίου",
+        "cancel-order-form" => "Ακυρωτικό Δελτίου Παραγγελίας",
+        _ => key
+    };
+}

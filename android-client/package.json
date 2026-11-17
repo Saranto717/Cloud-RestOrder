@@ -1,0 +1,22 @@
+{
+  "name": "restaurantorders-sunmi-client",
+  "version": "17.3.57",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "cap:sync": "cap sync android",
+    "android:debug": "cap sync android && cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "6.2.1",
+    "@capacitor/core": "6.2.1",
+    "@kduma-autoid/capacitor-sunmi-printer": "0.5.6"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "6.2.1",
+    "typescript": "^7.0.2",
+    "vite": "5.4.14"
+  }
+}
+

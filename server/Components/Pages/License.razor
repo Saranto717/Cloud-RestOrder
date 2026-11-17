@@ -1,0 +1,162 @@
+@page "/license"
+@implements IAsyncDisposable
+@attribute [AllowAnonymous]
+@rendermode InteractiveServer
+@inject LicenseService LicenseService
+@inject RemoteLicenseClient RemoteLicenseClient
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>Άδεια χρήσης</PageTitle>
+
+<main class="license-page">
+    <section class="license-card">
+        <header class="license-header">
+            <span class="license-icon" aria-hidden="true">🔐</span>
+            <div>
+                <div class="license-eyebrow">RESTAURANT ORDERS</div>
+                <h1>Άδεια χρήσης</h1>
+                <p>Ενεργοποίησε το κατάστημα σε αυτόν τον κεντρικό υπολογιστή.</p>
+            </div>
+        </header>
+
+        @if (status.IsLicensed)
+        {
+            <div class="license-active" role="status">
+                <span class="license-state-icon">✓</span>
+                <div>
+                    <strong>Η άδεια είναι ενεργή</strong>
+                    <span>@status.CustomerName</span>
+                    <span>@(status.ExpiresAtUtc is null ? "Μόνιμη άδεια" : $"Λήγει στις {status.ExpiresAtUtc.Value.ToLocalTime():dd/MM/yyyy}")</span>
+                </div>
+            </div>
+            <a class="primary license-activate license-home" href="/">Άνοιγμα εφαρμογής</a>
+            <button type="button" class="license-copy" disabled="@checking" @onclick="CheckRemoteLicenseAsync">@(checking ? "Έλεγχος…" : "Έλεγχος άδειας μέσω Internet")</button>
+        }
+        else
+        {
+            <div class="license-instructions">
+                <strong>Αναμονή απομακρυσμένης ενεργοποίησης</strong>
+                <span>@(RemoteLicenseClient.IsConfigured
+                    ? "Αντέγραψε τον κωδικό και δώσε τον στον διαχειριστή. Θα τον περάσει στον License Manager, θα επιλέξει άδεια και θα ενεργοποιήσει την εγκατάσταση."
+                    : "Δεν έχει οριστεί διεύθυνση License Manager. Πέρασέ την από τον installer ή επικοινώνησε με τον τεχνικό.")</span>
+            </div>
+
+            <div class="license-installation">
+                <div class="license-section-title">
+                    <span>Κωδικός εγκατάστασης</span>
+                    <button type="button" class="license-copy" @onclick="CopyInstallationId">Αντιγραφή κωδικού</button>
+                </div>
+                <div class="license-detail-row">
+                    <code>@status.InstallationId</code>
+                </div>
+            </div>
+
+            <button type="button" class="primary license-activate" disabled="@checking" @onclick="CheckRemoteLicenseAsync">@(checking ? "Έλεγχος…" : "Έλεγχος / λήψη άδειας μέσω Internet")</button>
+        }
+
+        @if (!RemoteLicenseClient.IsConfigured && !string.IsNullOrWhiteSpace(status.Error) && !status.IsLicensed)
+        {
+            <div class="license-result error" role="alert">@status.Error</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(message))
+        {
+            <div class="@(activationSucceeded ? "license-result success" : "license-result error")" role="status">@message</div>
+        }
+    </section>
+</main>
+
+@code {
+    private LicenseStatus status = new(false, "", "", "", null, null, null);
+    private bool activationSucceeded;
+    private bool checking;
+    private string? message;
+    private readonly CancellationTokenSource watchCancellation = new();
+
+    protected override void OnInitialized()
+    {
+        status = LicenseService.GetStatus();
+        if (!status.IsLicensed)
+            _ = WatchForAutomaticActivationAsync(watchCancellation.Token);
+    }
+
+    private async Task WatchForAutomaticActivationAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                var currentStatus = LicenseService.GetStatus();
+                if (!currentStatus.IsLicensed) continue;
+
+                await InvokeAsync(() =>
+                {
+                    status = currentStatus;
+                    activationSucceeded = true;
+                    message = "Η άδεια ενεργοποιήθηκε αυτόματα.";
+                    Navigation.NavigateTo("/", forceLoad: true);
+                });
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task CopyInstallationId()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", status.InstallationId);
+            message = "Ο κωδικός εγκατάστασης αντιγράφηκε.";
+            activationSucceeded = true;
+        }
+        catch
+        {
+            message = "Δεν ήταν δυνατή η αντιγραφή. Επίλεξε και αντέγραψε τα στοιχεία χειροκίνητα.";
+            activationSucceeded = false;
+        }
+    }
+
+    private async Task CheckRemoteLicenseAsync()
+    {
+        if (checking) return;
+        checking = true;
+        message = "Γίνεται σύνδεση με τον License Manager…";
+        activationSucceeded = false;
+        try
+        {
+            var result = await RemoteLicenseClient.CheckNowAsync();
+            status = result.License;
+            activationSucceeded = status.IsLicensed;
+            if (status.IsLicensed)
+            {
+                Navigation.NavigateTo("/", forceLoad: true);
+                return;
+            }
+            message = status.IsLicensed
+                ? "Η άδεια ελέγχθηκε και ενημερώθηκε μέσω Internet."
+                : result.Message ?? (result.Status == "pending"
+                    ? "Η εγκατάσταση αναμένει ενεργοποίηση από τον License Manager."
+                    : status.Error);
+        }
+        catch (Exception exception)
+        {
+            activationSucceeded = false;
+            message = $"Δεν ολοκληρώθηκε ο έλεγχος άδειας ({exception.GetType().Name}): {exception.Message}";
+        }
+        finally
+        {
+            checking = false;
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        watchCancellation.Cancel();
+        watchCancellation.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

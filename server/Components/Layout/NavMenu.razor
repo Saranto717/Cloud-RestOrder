@@ -1,0 +1,71 @@
+@inject IConfiguration Configuration
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<div class="topbar">
+    <span class="brand">🍽️ @displayName</span>
+
+    <AuthorizeView>
+        <Authorized>
+            <nav>
+                <div class="nav-links">
+                <AuthorizeView Roles="Waiter" Context="w">
+                    @if (!Configuration.GetValue<bool>("Edition:TakeAwayOnly"))
+                    {
+                        <a href="/waiter">Τραπέζια</a>
+                    }
+                    else if (!w.User.IsInRole("Admin"))
+                    {
+                        <a href="/waiter">🥡 Take Away</a>
+                    }
+                </AuthorizeView>
+
+                <AuthorizeView Roles="Admin" Context="a">
+                    @if (!Configuration.GetValue<bool>("Edition:TakeAwayOnly"))
+                    {
+                    <a href="/admin/tables">Τραπέζια</a>
+                    <a href="/admin/floorplan">Κάτοψη</a>
+                    }
+                    else
+                    {
+                    <a href="/waiter">🥡 Take Away</a>
+                    }
+                    <a href="/admin/printers">Εκτυπωτές</a>
+                    <a href="/admin/categories">Κατηγορίες</a>
+                    <a href="/admin/menu">Κατάλογος</a>
+                    <a href="/admin/extras">Extra</a>
+                    <a href="/admin/reports">Αναφορές</a>
+                    <a href="/admin/database-search">Αναζήτηση Βάσης</a>
+                    <a href="/admin/backoffice">Backoffice · Αποθήκη</a>
+                    <a href="/admin/fiscal-settings">Παραστατικά</a>
+                    <a href="/admin/appearance">Εμφάνιση</a>
+                    <a href="/admin/bank-pos">Τραπεζικά POS</a>
+                    <a href="/admin/issued-documents" data-testid="nav-issued-documents">Εκδοθείσες Αποδείξεις</a>
+                    <a href="/admin/parochos-history">Ιστορικό Parochos</a>
+                    <a href="/admin/reprint">Επανεκτύπωση</a>
+                    <a href="/admin/backups">Backup / Επαναφορά</a>
+                    <a href="/admin/cloud-sync">Σύνδεση Cloud</a>
+                    <a href="/admin/users">Χρήστες</a>
+                    <a href="/license">Άδεια χρήσης</a>
+                </AuthorizeView>
+
+                </div>
+                <div class="nav-actions">
+                <span class="userinfo">@context.User.Identity?.Name</span>
+                <form method="post" action="/api/logout" style="display:inline">
+                    <button type="submit" class="linkbtn">Αποσύνδεση</button>
+                </form>
+                </div>
+            </nav>
+        </Authorized>
+    </AuthorizeView>
+</div>
+
+@code {
+    private string displayName = "Παραγγελιοληψία";
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var appearance = await db.RestaurantAppearances.AsNoTracking().FirstOrDefaultAsync(x => x.Id == 1);
+        if (!string.IsNullOrWhiteSpace(appearance?.DisplayName)) displayName = appearance.DisplayName;
+    }
+}

@@ -1,0 +1,190 @@
+@page "/admin/backoffice"
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject InventoryService Inventory
+@inject AuthenticationStateProvider AuthProvider
+
+<PageTitle>Backoffice · Αποθήκη</PageTitle>
+<div class="backoffice">
+    <header class="bo-heading">
+        <div><span class="bo-eyebrow">ΔΙΑΧΕΙΡΙΣΗ ΚΑΤΑΣΤΗΜΑΤΟΣ</span><h1>Backoffice</h1><p>Αποθήκη, συνταγές, αγορές και εικόνα λειτουργίας σε ένα σημείο.</p></div>
+        <div class="bo-date">@DateTime.Now.ToString("dddd, dd MMMM yyyy", greekCulture)</div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(message)) { <div class="bo-notice @(isError ? "error" : "success")">@message</div> }
+    @if (loading) { <div class="bo-card">Φόρτωση backoffice…</div> }
+    else
+    {
+        <section class="bo-kpis">
+            <article><span>Υλικά αποθήκης</span><strong>@ingredients.Count(x => x.IsActive)</strong><small>ενεργά είδη</small></article>
+            <article class="warn"><span>Χαμηλό απόθεμα</span><strong>@ingredients.Count(x => x.IsActive && x.QuantityOnHand <= x.MinimumQuantity)</strong><small>στο όριο αναπλήρωσης</small></article>
+            <article class="accent"><span>Κόστος συνταγών</span><strong>€@recipeCostTotal.ToString("N2", greekCulture)</strong><small>ανά τεμάχιο προϊόντος</small></article>
+            <article class="good"><span>Κινήσεις περιόδου</span><strong>@periodMovements.Count</strong><small>αγορές, κατανάλωση, απογραφή</small></article>
+        </section>
+
+        <nav class="bo-tabs" aria-label="Ενότητες backoffice">
+            <button class="@(tab == "stock" ? "active" : "")" @onclick='() => SelectTab("stock")'>📦 Αποθήκη</button>
+            <button class="@(tab == "recipes" ? "active" : "")" @onclick='() => SelectTab("recipes")'>☕ Συνταγές</button>
+            <button class="@(tab == "purchases" ? "active" : "")" @onclick='() => SelectTab("purchases")'>🧾 Προμηθευτές & αγορές</button>
+            <button class="@(tab == "reports" ? "active" : "")" @onclick='() => SelectTab("reports")'>📊 Αναφορές</button>
+        </nav>
+
+        @if (tab == "stock")
+        {
+            <div class="bo-grid">
+                <section class="bo-card">
+                    <div class="bo-card-title"><div><h2>Νέο υλικό</h2><p>Καφές, γάλα, ποτήρια ή οποιοδήποτε συστατικό.</p></div><span>＋</span></div>
+                    <div class="bo-form">
+                        <label>Ονομασία<input @bind="newIngredientName" placeholder="π.χ. Κόκκοι καφέ" /></label>
+                        <label>Μονάδα
+                            <select @bind="newIngredientUnit"><option value="1">Τεμάχια</option><option value="2">Κιλά</option><option value="3">Λίτρα</option></select>
+                        </label>
+                        <label>Αρχικό απόθεμα<input type="number" min="0" step="0.001" @bind="newIngredientQuantity" /></label>
+                        <label>Ελάχιστο απόθεμα<input type="number" min="0" step="0.001" @bind="newIngredientMinimum" /></label>
+                        <label>Κόστος ανά μονάδα (€)<input type="number" min="0" step="0.0001" @bind="newIngredientCost" /></label>
+                        <button class="bo-primary" @onclick="AddIngredient">Προσθήκη υλικού</button>
+                    </div>
+                </section>
+                <section class="bo-card bo-card-wide">
+                    <div class="bo-card-title"><div><h2>Απόθεμα</h2><p>Πέρασε την πραγματική ποσότητα απογραφής. Η διαφορά καταγράφεται στο ιστορικό.</p></div><span>↕</span></div>
+                    @if (ingredients.Count == 0) { <div class="bo-empty">Πρόσθεσε τα πρώτα υλικά της αποθήκης.</div> }
+                    else
+                    {
+                        <div class="bo-table-wrap"><table><thead><tr><th>Υλικό</th><th>Υπόλοιπο</th><th>Μονάδα</th><th>Ελάχιστο</th><th>Κόστος / μον.</th><th>Αξία αποθέματος</th><th>Απογραφή</th></tr></thead><tbody>
+                        @foreach (var item in ingredients.Where(x => x.IsActive).OrderBy(x => x.Name))
+                        {
+                            <tr class="@(item.QuantityOnHand <= item.MinimumQuantity ? "low-stock" : "")">
+                                <td><strong>@item.Name</strong>@if (item.QuantityOnHand <= item.MinimumQuantity) { <span class="bo-low-tag">ΑΝΑΠΛΗΡΩΣΗ</span> }</td>
+                                <td>@item.QuantityOnHand.ToString("0.###", greekCulture)</td><td>@UnitName(item.MeasurementUnitCode)</td><td>@item.MinimumQuantity.ToString("0.###", greekCulture)</td>
+                                <td>€@item.UnitCost.ToString("N4", greekCulture)</td><td>€@((item.QuantityOnHand * item.UnitCost).ToString("N2", greekCulture))</td>
+                                <td class="bo-count-cell"><input type="number" min="0" step="0.001" @bind="actualCounts[item.Id]" /><button title="Αποθήκευση απογραφής" @onclick="() => SaveCount(item)">✓</button></td>
+                            </tr>
+                        }
+                        </tbody></table></div>
+                    }
+                </section>
+            </div>
+        }
+        else if (tab == "recipes")
+        {
+            <section class="bo-card">
+                <div class="bo-card-title"><div><h2>Συνταγή προϊόντος</h2><p>Η ποσότητα είναι αυτή που αφαιρείται ανά ένα προϊόν. π.χ. Freddo: καφές 0,018 kg και ποτήρι 1 τεμ.</p></div><span>☕</span></div>
+                <div class="bo-recipe-picker"><label>Προϊόν καταλόγου<select value="@selectedMenuItemId" @onchange="ChangeMenuItem"><option value="0">Επίλεξε προϊόν</option>@foreach (var menuItem in menuItems) { <option value="@menuItem.Id">@menuItem.Name · €@menuItem.Price.ToString("N2", greekCulture)</option> }</select></label>
+                    @if (selectedMenuItemId > 0) { <div class="bo-cost-preview"><span>Κόστος υλικών ανά προϊόν</span><strong>€@SelectedRecipeCost().ToString("N3", greekCulture)</strong><small>Αυτόματη αφαίρεση μετά την αποστολή</small></div> }
+                </div>
+                @if (selectedMenuItemId > 0)
+                {
+                    <div class="bo-recipe-list">
+                        @foreach (var row in recipeRows)
+                        {
+                            <div class="bo-recipe-row"><select @bind="row.IngredientId"><option value="0">Επίλεξε υλικό</option>@foreach (var ingredient in ingredients.Where(x => x.IsActive)) { <option value="@ingredient.Id">@ingredient.Name (@UnitName(ingredient.MeasurementUnitCode))</option> }</select><input type="number" min="0.000001" step="0.001" placeholder="Ποσότητα ανά προϊόν" @bind="row.Quantity" /><span>ανά προϊόν</span><button class="bo-delete" title="Αφαίρεση γραμμής" @onclick="() => recipeRows.Remove(row)">×</button></div>
+                        }
+                    </div>
+                    <div class="bo-actions"><button class="bo-secondary" @onclick="() => recipeRows.Add(new RecipeRow())">＋ Προσθήκη υλικού</button><button class="bo-primary" @onclick="SaveRecipe">Αποθήκευση συνταγής</button></div>
+                    <div class="bo-info">Δεν υπάρχει αυτόματη συνταγή για νέο προϊόν. Καταχώρισέ την εδώ για να αρχίσει η αφαίρεση αποθέματος.</div>
+                }
+            </section>
+            <section class="bo-card"><div class="bo-card-title"><div><h2>Κόστος ανά προϊόν</h2><p>Υπολογίζεται από τις ενεργές συνταγές και το μέσο κόστος αγοράς των υλικών.</p></div></div><div class="bo-table-wrap"><table><thead><tr><th>Προϊόν</th><th>Τιμή πώλησης</th><th>Κόστος συνταγής</th><th>Μικτό περιθώριο</th><th>Συνταγή</th></tr></thead><tbody>@foreach (var product in menuItems.OrderBy(x => x.Name)) { var cost = RecipeCost(product.Id); <tr><td>@product.Name</td><td>€@product.Price.ToString("N2", greekCulture)</td><td>€@cost.ToString("N3", greekCulture)</td><td>€@((product.Price - cost).ToString("N2", greekCulture))</td><td>@(recipeLines.Any(x => x.MenuItemId == product.Id) ? "Καταχωρισμένη" : "Δεν έχει οριστεί")</td></tr> }</tbody></table></div></section>
+        }
+        else if (tab == "purchases")
+        {
+            <div class="bo-grid">
+                <section class="bo-card">
+                    <div class="bo-card-title"><div><h2>Προσθήκη προμηθευτή</h2><p>Τα στοιχεία χρησιμοποιούνται για την αρχειοθέτηση αγορών.</p></div><span>♧</span></div>
+                    <div class="bo-form"><label>Επωνυμία<input @bind="supplierName" placeholder="π.χ. Προμηθευτής ΑΕ" /></label><label>ΑΦΜ<input @bind="supplierVat" inputmode="numeric" /></label><label>Τηλέφωνο<input @bind="supplierPhone" inputmode="tel" /></label><label>Email<input @bind="supplierEmail" type="email" /></label><button class="bo-primary" @onclick="AddSupplier">Αποθήκευση προμηθευτή</button></div>
+                    @if (suppliers.Count > 0) { <div class="bo-supplier-list"><strong>Προμηθευτές</strong>@foreach (var supplier in suppliers.Where(x => x.IsActive).OrderBy(x => x.Name)) { <div>@supplier.Name <small>@supplier.Phone @supplier.Email</small></div> }</div> }
+                </section>
+                <section class="bo-card">
+                    <div class="bo-card-title"><div><h2>Καταχώριση αγοράς</h2><p>Η παραλαβή ενημερώνει αμέσως το απόθεμα και το μέσο κόστος.</p></div><span>＋</span></div>
+                    <div class="bo-form"><label>Προμηθευτής<select @bind="purchaseSupplierId"><option value="0">Χωρίς προμηθευτή</option>@foreach (var supplier in suppliers.Where(x => x.IsActive)) { <option value="@supplier.Id">@supplier.Name</option> }</select></label><label>Υλικό<select @bind="purchaseIngredientId"><option value="0">Επίλεξε υλικό</option>@foreach (var ingredient in ingredients.Where(x => x.IsActive)) { <option value="@ingredient.Id">@ingredient.Name (@UnitName(ingredient.MeasurementUnitCode))</option> }</select></label><label>Αριθμός τιμολογίου<input @bind="purchaseInvoice" placeholder="προαιρετικό" /></label><label>Ημερομηνία<input type="date" @bind="purchaseDate" /></label><label>Ποσότητα<input type="number" min="0.001" step="0.001" @bind="purchaseQuantity" /></label><label>Τιμή μονάδας (€)<input type="number" min="0" step="0.0001" @bind="purchaseUnitCost" /></label><label class="bo-full">Σημείωση<input @bind="purchaseNote" placeholder="π.χ. παραλαβή εβδομάδας" /></label><button class="bo-primary" @onclick="ReceivePurchase">Καταχώριση αγοράς</button></div>
+                </section>
+            </div>
+            <section class="bo-card"><div class="bo-card-title"><div><h2>Πρόσφατες αγορές</h2><p>Ιστορικό παραλαβών και αγοραστικής αξίας.</p></div></div><div class="bo-table-wrap"><table><thead><tr><th>Ημερομηνία</th><th>Προμηθευτής</th><th>Παραστατικό</th><th>Υλικά</th><th>Αξία</th><th>Σημείωση</th></tr></thead><tbody>@foreach (var purchase in recentPurchases) { <tr><td>@purchase.PurchasedAt.ToString("dd/MM/yyyy HH:mm")</td><td>@(purchase.Supplier?.Name ?? "—")</td><td>@(purchase.InvoiceNumber ?? "—")</td><td>@string.Join(", ", purchase.Lines.Select(x => $"{x.InventoryItem?.Name} {x.Quantity:0.###} {UnitName(x.InventoryItem?.MeasurementUnitCode ?? 1)}"))</td><td>€@purchase.TotalCost.ToString("N2", greekCulture)</td><td>@purchase.Notes</td></tr> }</tbody></table></div></section>
+        }
+        else
+        {
+            <section class="bo-card bo-report-filter"><div><h2>Αναφορές αποθήκης & πωλήσεων</h2><p>Κινήσεις, κατανάλωση συνταγών, εισπράξεις και ακυρώσεις στην επιλεγμένη περίοδο.</p></div><label>Από<input type="date" @bind="reportFrom" /></label><label>Έως<input type="date" @bind="reportTo" /></label><button class="bo-secondary" @onclick="LoadReports">Ενημέρωση</button></section>
+            <section class="bo-kpis bo-report-kpis"><article><span>Αγορές υλικών</span><strong>€@periodMovements.Where(x => x.Kind == InventoryMovementKind.Purchase).Sum(x => (decimal)(x.QuantityDelta * x.UnitCost)).ToString("N2", greekCulture)</strong><small>αξία παραλαβών</small></article><article class="warn"><span>Κόστος κατανάλωσης</span><strong>€@(-periodMovements.Where(x => x.Kind == InventoryMovementKind.Consumption).Sum(x => (decimal)(x.QuantityDelta * x.UnitCost))).ToString("N2", greekCulture)</strong><small>βάσει συνταγών</small></article><article class="accent"><span>Εισπράξεις</span><strong>€@periodPayments.Sum(x => x.Amount).ToString("N2", greekCulture)</strong><small>εκδοθείσες πληρωμές</small></article><article class="good"><span>Ακυρώσεις ειδών</span><strong>@periodCancelledItems.Count</strong><small>στην περίοδο</small></article></section>
+            <section class="bo-card"><div class="bo-card-title"><div><h2>Κατανάλωση υλικών</h2><p>Τα υλικά αφαιρούνται όταν το είδος αποστέλλεται στην κουζίνα/μπαρ. Ακύρωση μετά την προετοιμασία δεν επιστρέφει πρώτες ύλες.</p></div></div><div class="bo-table-wrap"><table><thead><tr><th>Υλικό</th><th>Κατανάλωση</th><th>Μονάδα</th><th>Κόστος</th></tr></thead><tbody>@foreach (var group in periodMovements.Where(x => x.Kind == InventoryMovementKind.Consumption).GroupBy(x => x.InventoryItemId).OrderBy(x => x.First().InventoryItem?.Name)) { var first = group.First(); var used = -group.Sum(x => x.QuantityDelta); <tr><td>@first.InventoryItem?.Name</td><td>@used.ToString("0.###", greekCulture)</td><td>@UnitName(first.InventoryItem?.MeasurementUnitCode ?? 1)</td><td>€@(-group.Sum(x => (decimal)(x.QuantityDelta * x.UnitCost))).ToString("N2", greekCulture)</td></tr> }</tbody></table></div></section>
+            <section class="bo-card"><div class="bo-card-title"><div><h2>Εισπράξεις ανά τρόπο πληρωμής</h2><p>Σύνολα από επιτυχώς εκδοθείσες πληρωμές.</p></div></div><div class="bo-payment-cards">@foreach (var group in periodPayments.GroupBy(x => x.PaymentMethod).OrderBy(x => x.Key)) { <div><span>@PaymentLabel(group.Key)</span><strong>€@group.Sum(x => x.Amount).ToString("N2", greekCulture)</strong><small>@group.Count() πληρωμές</small></div> }</div></section>
+            <section class="bo-card"><div class="bo-card-title"><div><h2>Ιστορικό κινήσεων</h2><p>Κάθε αγορά, κατανάλωση και απογραφή παραμένει καταγεγραμμένη.</p></div></div><div class="bo-table-wrap"><table><thead><tr><th>Ημερομηνία</th><th>Υλικό</th><th>Κίνηση</th><th>Μεταβολή</th><th>Κόστος</th><th>Αιτιολογία</th></tr></thead><tbody>@foreach (var movement in periodMovements.OrderByDescending(x => x.CreatedAt).Take(150)) { <tr><td>@movement.CreatedAt.ToString("dd/MM/yyyy HH:mm")</td><td>@movement.InventoryItem?.Name</td><td>@MovementLabel(movement.Kind)</td><td class="@(movement.QuantityDelta < 0 ? "negative" : "positive")">@(movement.QuantityDelta > 0 ? "+" : "")@movement.QuantityDelta.ToString("0.###", greekCulture) @UnitName(movement.InventoryItem?.MeasurementUnitCode ?? 1)</td><td>€@Math.Abs(movement.QuantityDelta * movement.UnitCost).ToString("N2", greekCulture)</td><td>@movement.Note</td></tr> }</tbody></table></div></section>
+        }
+    }
+</div>
+
+<style>
+    article.content:has(.backoffice){max-width:1600px}.backoffice{max-width:1500px;margin:0 auto;padding:4px 0 32px;color:#24324a}.bo-heading{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin:8px 0 18px}.bo-heading h1{margin:4px 0;font-size:2rem;color:#1f2a44}.bo-heading p,.bo-card-title p,.bo-report-filter p{margin:0;color:#6a7890}.bo-eyebrow{font-size:.72rem;font-weight:900;letter-spacing:.12em;color:#4380be}.bo-date{padding:10px 14px;background:#fff;border:1px solid #dce5f0;border-radius:12px;color:#5a6780;font-weight:750}.bo-notice{padding:12px 16px;margin:12px 0;border-radius:12px;font-weight:750}.bo-notice.success{background:#eaf8ef;color:#267044}.bo-notice.error{background:#fff0ef;color:#ad3a32}.bo-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:14px 0 18px}.bo-kpis article{background:#fff;border:1px solid #e1e8f1;border-top:4px solid #3476b6;border-radius:15px;padding:14px 16px;box-shadow:0 5px 18px #1d31500c}.bo-kpis article.warn{border-top-color:#e1a43b}.bo-kpis article.accent{border-top-color:#8064ca}.bo-kpis article.good{border-top-color:#38a06c}.bo-kpis span,.bo-kpis small{display:block;color:#728096;font-size:.83rem;font-weight:700}.bo-kpis strong{display:block;margin:5px 0;color:#1f2a44;font-size:1.45rem}.bo-tabs{display:flex;gap:8px;flex-wrap:wrap;padding:6px;margin-bottom:16px;background:#e9eff7;border-radius:14px}.bo-tabs button{padding:11px 15px;border:0;border-radius:10px;background:transparent;color:#4c5b73;font:inherit;font-weight:800;cursor:pointer}.bo-tabs button.active{background:#1f2a44;color:#fff;box-shadow:0 4px 12px #17243a30}.bo-grid{display:grid;grid-template-columns:minmax(290px,.8fr) minmax(400px,1.4fr);gap:14px;align-items:start}.bo-card{margin:0 0 14px;padding:18px;background:#fff;border:1px solid #e0e7f0;border-radius:16px;box-shadow:0 5px 18px #1d31500a;min-width:0}.bo-card-title{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:15px}.bo-card-title h2,.bo-report-filter h2{margin:0 0 5px;font-size:1.08rem;color:#24324a}.bo-card-title>span{display:grid;place-items:center;width:36px;height:36px;border-radius:11px;background:#edf4fd;color:#3375b6;font-size:1.1rem}.bo-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.bo-form label,.bo-recipe-picker label,.bo-report-filter label{display:grid;gap:5px;color:#5d6b80;font-size:.84rem;font-weight:750}.bo-form input,.bo-form select,.bo-recipe-picker select,.bo-recipe-row input,.bo-recipe-row select,.bo-report-filter input,.bo-count-cell input{width:100%;min-height:40px;box-sizing:border-box;padding:8px 10px;border:1px solid #cfd9e6;border-radius:9px;background:#fff;color:#28364d;font:inherit}.bo-full{grid-column:1/-1}.bo-primary,.bo-secondary{min-height:42px;padding:9px 14px;border:0;border-radius:9px;font:inherit;font-weight:800;cursor:pointer}.bo-primary{background:#236f45;color:#fff}.bo-secondary{background:#edf3fa;color:#284a72;border:1px solid #d5e0ed}.bo-form .bo-primary{grid-column:1/-1}.bo-table-wrap{width:100%;overflow:auto}.bo-table-wrap table{width:100%;border-collapse:collapse;min-width:760px}.bo-table-wrap th{padding:10px;background:#f3f6fa;color:#5c6a80;text-align:left;font-size:.76rem;text-transform:uppercase;white-space:nowrap}.bo-table-wrap td{padding:10px;border-bottom:1px solid #edf0f4;color:#3c4960;vertical-align:middle}.bo-table-wrap tr:last-child td{border-bottom:0}.bo-table-wrap tr.low-stock{background:#fffaf0}.bo-low-tag{display:inline-block;margin-left:8px;padding:3px 6px;background:#fff0d2;color:#95610a;border-radius:6px;font-size:.63rem;font-weight:900}.bo-count-cell{display:flex;gap:5px;min-width:120px}.bo-count-cell input{min-width:76px}.bo-count-cell button,.bo-delete{width:36px;min-width:36px;border:0;border-radius:8px;background:#e8f7ee;color:#287549;font-size:1.1rem;font-weight:900;cursor:pointer}.bo-empty,.bo-info{padding:12px;background:#f4f7fb;border-radius:9px;color:#6d7b91}.bo-info{margin-top:14px;background:#f0f6fd;color:#506882;font-size:.87rem}.bo-recipe-picker{display:flex;align-items:end;gap:16px;flex-wrap:wrap}.bo-recipe-picker label{flex:1;min-width:260px}.bo-cost-preview{display:grid;gap:3px;padding:11px 14px;background:#f1f7ff;border-radius:11px}.bo-cost-preview span,.bo-cost-preview small{color:#687990;font-size:.78rem}.bo-cost-preview strong{font-size:1.3rem;color:#1f2a44}.bo-recipe-list{display:grid;gap:8px;margin-top:16px}.bo-recipe-row{display:grid;grid-template-columns:minmax(190px,1fr) minmax(130px,.6fr) auto 36px;gap:8px;align-items:center}.bo-recipe-row>span{color:#758198;font-size:.8rem}.bo-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:14px}.bo-supplier-list{display:grid;gap:7px;margin-top:15px}.bo-supplier-list>div{padding:9px 10px;background:#f6f8fb;border-radius:8px;font-weight:750}.bo-supplier-list small{display:block;color:#78859a;font-weight:500}.bo-report-filter{display:flex;align-items:end;gap:12px;flex-wrap:wrap}.bo-report-filter>div{flex:1;min-width:280px}.bo-report-filter label{min-width:150px}.bo-report-kpis{margin-top:0}.bo-payment-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.bo-payment-cards>div{display:grid;gap:4px;padding:12px;border-radius:11px;background:#f5f8fc}.bo-payment-cards span,.bo-payment-cards small{color:#708097;font-size:.82rem}.bo-payment-cards strong{color:#253550;font-size:1.2rem}.positive{color:#25804b!important;font-weight:800}.negative{color:#b5473e!important;font-weight:800}
+    @@media(max-width:900px){.bo-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.bo-grid{grid-template-columns:1fr}}
+    @@media(max-width:560px){.backoffice{padding:0 2px 24px}.bo-kpis{gap:8px}.bo-kpis article{padding:11px}.bo-kpis strong{font-size:1.2rem}.bo-card{padding:13px}.bo-form{grid-template-columns:1fr}.bo-full,.bo-form .bo-primary{grid-column:auto}.bo-recipe-row{grid-template-columns:minmax(0,1fr) 100px 34px}.bo-recipe-row>span{display:none}.bo-recipe-row select{grid-column:1/-1}.bo-report-filter>div{min-width:100%}}
+</style>
+
+@code {
+    private readonly System.Globalization.CultureInfo greekCulture = System.Globalization.CultureInfo.GetCultureInfo("el-GR");
+    private bool loading = true, isError;
+    private string tab = "stock", message = "";
+    private List<InventoryItem> ingredients = new();
+    private List<MenuItem> menuItems = new();
+    private List<InventorySupplier> suppliers = new();
+    private List<InventoryRecipeLine> recipeLines = new();
+    private List<InventoryPurchase> recentPurchases = new();
+    private List<InventoryMovement> periodMovements = new();
+    private List<OrderPayment> periodPayments = new();
+    private List<OrderItem> periodCancelledItems = new();
+    private Dictionary<int, decimal> actualCounts = new();
+    private List<RecipeRow> recipeRows = new();
+    private int selectedMenuItemId, newIngredientUnit = 1, purchaseIngredientId, purchaseSupplierId;
+    private string newIngredientName = "", supplierName = "", supplierVat = "", supplierPhone = "", supplierEmail = "", purchaseInvoice = "", purchaseNote = "";
+    private decimal newIngredientQuantity, newIngredientMinimum, newIngredientCost, purchaseQuantity = 1, purchaseUnitCost;
+    private DateTime purchaseDate = DateTime.Today, reportFrom = DateTime.Today, reportTo = DateTime.Today;
+    private decimal recipeCostTotal => menuItems.Sum(x => RecipeCost(x.Id));
+
+    protected override async Task OnInitializedAsync()
+    {
+        reportFrom = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        loading = true;
+        using var db = await DbFactory.CreateDbContextAsync();
+        ingredients = await db.InventoryItems.OrderBy(x => x.Name).ToListAsync();
+        menuItems = await db.MenuItems.Where(x => x.IsAvailable).OrderBy(x => x.Name).ToListAsync();
+        suppliers = await db.InventorySuppliers.OrderBy(x => x.Name).ToListAsync();
+        recipeLines = await db.InventoryRecipeLines.Include(x => x.InventoryItem).ToListAsync();
+        recentPurchases = await db.InventoryPurchases.Include(x => x.Supplier).Include(x => x.Lines).ThenInclude(x => x.InventoryItem).OrderByDescending(x => x.PurchasedAt).Take(30).ToListAsync();
+        actualCounts = ingredients.ToDictionary(x => x.Id, x => x.QuantityOnHand);
+        if (selectedMenuItemId > 0) recipeRows = recipeLines.Where(x => x.MenuItemId == selectedMenuItemId).Select(x => new RecipeRow { IngredientId = x.InventoryItemId, Quantity = x.QuantityPerProduct }).ToList();
+        if (recipeRows.Count == 0) recipeRows.Add(new RecipeRow());
+        loading = false;
+        await LoadReports();
+    }
+
+    private async Task LoadReports()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var from = reportFrom.Date;
+        var until = reportTo.Date.AddDays(1);
+        periodMovements = await db.InventoryMovements.Include(x => x.InventoryItem).Where(x => x.CreatedAt >= from && x.CreatedAt < until).ToListAsync();
+        periodPayments = await db.OrderPayments.Where(x => x.CreatedAt >= from && x.CreatedAt < until && x.FiscalStatus == FiscalStatus.Issued).ToListAsync();
+        periodCancelledItems = await db.OrderItems.Where(x => x.CancelledAt >= from && x.CancelledAt < until && x.IsCancelled).ToListAsync();
+        StateHasChanged();
+    }
+
+    private void SelectTab(string value) { tab = value; message = ""; }
+    private async Task AddIngredient() => await Run(async () => { await Inventory.AddIngredientAsync(newIngredientName, newIngredientUnit, newIngredientQuantity, newIngredientMinimum, newIngredientCost); newIngredientName = ""; newIngredientQuantity = newIngredientMinimum = newIngredientCost = 0; await LoadData(); });
+    private async Task AddSupplier() => await Run(async () => { await Inventory.AddSupplierAsync(new InventorySupplier { Name = supplierName, VatNumber = supplierVat, Phone = supplierPhone, Email = supplierEmail }); supplierName = supplierVat = supplierPhone = supplierEmail = ""; await LoadData(); });
+    private async Task ReceivePurchase() => await Run(async () => { var auth = await AuthProvider.GetAuthenticationStateAsync(); var userId = int.Parse(auth.User.FindFirst(ClaimTypes.NameIdentifier)!.Value); await Inventory.ReceivePurchaseAsync(purchaseSupplierId == 0 ? null : purchaseSupplierId, purchaseInvoice, purchaseDate, purchaseIngredientId, purchaseQuantity, purchaseUnitCost, userId, purchaseNote); purchaseInvoice = purchaseNote = ""; purchaseQuantity = 1; purchaseUnitCost = 0; await LoadData(); });
+    private async Task SaveCount(InventoryItem item) => await Run(async () => { var auth = await AuthProvider.GetAuthenticationStateAsync(); var userId = int.Parse(auth.User.FindFirst(ClaimTypes.NameIdentifier)!.Value); await Inventory.AdjustStockAsync(item.Id, actualCounts.GetValueOrDefault(item.Id), userId, null); await LoadData(); });
+    private async Task ChangeMenuItem(ChangeEventArgs args) { selectedMenuItemId = int.TryParse(args.Value?.ToString(), out var id) ? id : 0; using var db = await DbFactory.CreateDbContextAsync(); recipeRows = await db.InventoryRecipeLines.Where(x => x.MenuItemId == selectedMenuItemId).Select(x => new RecipeRow { IngredientId = x.InventoryItemId, Quantity = x.QuantityPerProduct }).ToListAsync(); if (recipeRows.Count == 0) recipeRows.Add(new RecipeRow()); }
+    private async Task SaveRecipe() => await Run(async () => { var rows = recipeRows.Where(x => x.IngredientId > 0 || x.Quantity > 0).Select(x => (x.IngredientId, x.Quantity)).ToArray(); await Inventory.SaveRecipeAsync(selectedMenuItemId, rows); await LoadData(); message = "Η συνταγή αποθηκεύτηκε. Τα υλικά θα αφαιρούνται αυτόματα μετά την αποστολή προϊόντων."; });
+    private decimal RecipeCost(int menuItemId) => recipeLines.Where(x => x.MenuItemId == menuItemId).Sum(x => x.QuantityPerProduct * (x.InventoryItem?.UnitCost ?? 0));
+    private decimal SelectedRecipeCost() => RecipeCost(selectedMenuItemId);
+    private static string UnitName(int code) => code switch { 2 => "κιλά", 3 => "λίτρα", _ => "τεμ." };
+    private static string PaymentLabel(PaymentMethod method) => method switch { PaymentMethod.Cash => "Μετρητά", PaymentMethod.Card => "Κάρτα", PaymentMethod.DomesticBankAccount => "Κατάθεση ημεδαπής", PaymentMethod.ForeignBankAccount => "Κατάθεση αλλοδαπής", PaymentMethod.Iris => "IRIS", PaymentMethod.Credit => "Επί πιστώσει", PaymentMethod.Check => "Επιταγή", PaymentMethod.WebBanking => "Web Banking", _ => method.ToString() };
+    private static string MovementLabel(InventoryMovementKind kind) => kind switch { InventoryMovementKind.Purchase => "Αγορά / παραλαβή", InventoryMovementKind.Consumption => "Κατανάλωση συνταγής", InventoryMovementKind.CancellationReturn => "Παλαιά καταχώριση επιστροφής", _ => "Απογραφή / διόρθωση" };
+    private async Task Run(Func<Task> action) { try { message = ""; isError = false; await action(); } catch (Exception ex) { message = ex.Message; isError = true; } }
+    private sealed class RecipeRow { public int IngredientId { get; set; } public decimal Quantity { get; set; } }
+}

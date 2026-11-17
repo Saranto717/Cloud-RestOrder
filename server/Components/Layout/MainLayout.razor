@@ -1,0 +1,28 @@
+@inherits LayoutComponentBase
+@inject LicenseService License
+
+<div class="page">
+    <NavMenu />
+    <main>
+        @if (daysUntilExpiry is >= 0 and <= 10)
+        {
+            <div class="license-expiry-warning" role="status">
+                Η συνδρομή λήγει σε <strong>@daysUntilExpiry</strong> ημέρες. Επικοινωνήστε με τον προμηθευτή σας.
+            </div>
+        }
+        <article class="content">
+            @Body
+        </article>
+    </main>
+</div>
+
+@code {
+    private int? daysUntilExpiry;
+
+    protected override void OnInitialized()
+    {
+        var status = License.GetStatus();
+        if (status.IsLicensed && status.ExpiresAtUtc is not null)
+            daysUntilExpiry = Math.Max(0, (int)Math.Ceiling((status.ExpiresAtUtc.Value - DateTime.UtcNow).TotalDays));
+    }
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">RestaurantOrders SUNMI</string>
+    <string name="title_activity_main">RestaurantOrders SUNMI</string>
+    <string name="package_name">gr.restaurantorders.sunmiclient</string>
+    <string name="custom_url_scheme">gr.restaurantorders.sunmiclient</string>
+</resources>

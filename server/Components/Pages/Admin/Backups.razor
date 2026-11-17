@@ -1,0 +1,136 @@
+@page "/admin/backups"
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@inject DatabaseBackupService BackupManager
+@inject IJSRuntime JS
+
+<h2>Αντίγραφα ασφαλείας</h2>
+<p class="hint">Δημιουργείται αυτόματα ένα αντίγραφο κάθε ημέρα στις 03:00. Κρατούνται τα 30 πιο πρόσφατα αυτόματα αντίγραφα.</p>
+
+<div class="admin-form">
+    <button @onclick="CreateBackupNow" disabled="@busy">@(busy ? "Δημιουργία…" : "Δημιουργία αντιγράφου τώρα")</button>
+</div>
+
+<h3>Επαναφορά από backup</h3>
+<p class="error">Η επαναφορά αντικαθιστά όλα τα τρέχοντα δεδομένα και επανεκκινεί την εφαρμογή. Πριν την αντικατάσταση δημιουργείται αυτόματα backup της τρέχουσας βάσης. Βεβαιώσου ότι οι υπόλοιποι χρήστες έχουν αποσυνδεθεί.</p>
+<div class="admin-form">
+    <label>Επίλεξε αρχείο backup (.db, έως 256 MB)</label>
+    <InputFile OnChange="RestoreBackup" accept=".db" disabled="@busy" />
+</div>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <p class="@(messageIsError ? "error" : "hint")">@message</p>
+}
+
+<h3>Διαθέσιμα αντίγραφα</h3>
+@if (backups.Count == 0)
+{
+    <p class="hint">Δεν υπάρχει ακόμη αντίγραφο ασφαλείας.</p>
+}
+else
+{
+    <table class="admin-table">
+        <thead><tr><th>Ημερομηνία</th><th>Τύπος</th><th>Μέγεθος</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var backup in backups)
+            {
+                <tr>
+                    <td>@backup.CreatedAt.ToString("dd/MM/yyyy HH:mm")</td>
+                    <td>@KindName(backup.Kind)</td>
+                    <td>@SizeName(backup.SizeBytes)</td>
+                    <td>
+                        <a class="button" href="/api/admin/backups/@Uri.EscapeDataString(backup.FileName)">Λήψη</a>
+                        <button disabled="@busy" @onclick="() => RestoreSavedBackup(backup)">Επαναφορά</button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private IReadOnlyList<DatabaseBackupInfo> backups = Array.Empty<DatabaseBackupInfo>();
+    private bool busy;
+    private bool messageIsError;
+    private string? message;
+
+    protected override void OnInitialized() => Refresh();
+
+    private void Refresh() => backups = BackupManager.GetBackups();
+
+    private async Task CreateBackupNow()
+    {
+        busy = true;
+        message = null;
+        messageIsError = false;
+        try
+        {
+            var created = await BackupManager.CreateBackupAsync();
+            message = $"Δημιουργήθηκε αντίγραφο: {created.FileName}";
+            Refresh();
+        }
+        catch (Exception ex)
+        {
+            message = "Αποτυχία δημιουργίας backup: " + ex.Message;
+            messageIsError = true;
+        }
+        finally { busy = false; }
+    }
+
+    private async Task RestoreSavedBackup(DatabaseBackupInfo backup)
+    {
+        if (!await ConfirmRestore(backup.FileName)) return;
+        var path = BackupManager.GetBackupPath(backup.FileName);
+        if (path is null)
+        {
+            message = "Το αρχείο backup δεν βρέθηκε.";
+            messageIsError = true;
+            return;
+        }
+        await using var stream = File.OpenRead(path);
+        await StageAndRestart(stream, backup.FileName);
+    }
+
+    private async Task RestoreBackup(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (!await ConfirmRestore(file.Name)) return;
+        await using var stream = file.OpenReadStream(DatabaseBackupService.MaxRestoreUploadBytes);
+        await StageAndRestart(stream, file.Name);
+    }
+
+    private async Task<bool> ConfirmRestore(string fileName) => await JS.InvokeAsync<bool>("confirm",
+        $"Προσοχή: το backup «{fileName}» θα αντικαταστήσει τα τρέχοντα δεδομένα. Δημιουργείται πρώτα αντίγραφο της τρέχουσας βάσης και μετά θα επανεκκινηθεί η εφαρμογή. Συνέχεια;");
+
+    private async Task StageAndRestart(Stream stream, string fileName)
+    {
+        busy = true;
+        message = null;
+        try
+        {
+            await BackupManager.StageRestoreAsync(stream, fileName);
+            messageIsError = false;
+            message = "Το backup ελέγχθηκε. Η εφαρμογή επανεκκινείται και θα ανοίξει με τα δεδομένα του αντιγράφου.";
+            BackupManager.RequestRestartForRestore();
+        }
+        catch (Exception ex)
+        {
+            message = "Δεν έγινε επαναφορά: " + ex.Message;
+            messageIsError = true;
+            busy = false;
+        }
+    }
+
+    private static string KindName(string kind) => kind switch
+    {
+        "auto" => "Αυτόματο",
+        "manual" => "Χειροκίνητο",
+        "pre-edit" => "Πριν από επεξεργασία βάσης",
+        "pre-restore" => "Πριν από επαναφορά",
+        _ => kind
+    };
+
+    private static string SizeName(long bytes) => bytes < 1024 * 1024
+        ? $"{bytes / 1024d:0.#} KB" : $"{bytes / 1024d / 1024d:0.##} MB";
+}

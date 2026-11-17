@@ -1,0 +1,222 @@
+@page "/admin/floorplan"
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IJSRuntime JS
+@inject IConfiguration Configuration
+@inject NavigationManager Nav
+
+<h2>Κάτοψη Μαγαζιού</h2>
+<p class="hint">
+    Για να τοποθετήσεις ή να μετακινήσεις τραπέζι με ακρίβεια: πάτησε το όνομά του στη λίστα,
+    ώστε να σκουρύνει, και μετά πάτησε το σημείο που θέλεις μέσα στην κάτοψη. Αυτό λειτουργεί
+    και για τραπέζια που είναι ήδη τοποθετημένα και δεν χρειάζεται σύρσιμο. Για μικροδιορθώσεις,
+    μπορείς επίσης να σύρεις το τραπέζι από το σημείο που το πιάνεις.
+</p>
+
+<div class="floorplan-layout">
+    <div class="floorplan-sidebar">
+        <h4>Τραπέζια</h4>
+        @foreach (var t in tables)
+        {
+            <button class="table-pick-btn @(selectedForPlacementId == t.Id ? "selected" : "") @(t.PosX is not null ? "placed" : "")"
+                    @key="t.Id"
+                    @onclick="() => SelectForPlacement(t.Id)">
+                @(selectedForPlacementId == t.Id ? $"↳ Μετακίνηση: {t.Name}" : t.Name) @(t.PosX is null ? " (χωρίς θέση)" : "")
+            </button>
+        }
+        @if (selectedForPlacementId is not null)
+        {
+            <p class="hint"><strong>Επιλεγμένο: @tables.First(t => t.Id == selectedForPlacementId).Name</strong><br />Ρύθμισε τη θέση με τους sliders και δες την προεπισκόπηση στην κάτοψη.</p>
+            <div class="floorplan-coordinates">
+                <label>X: @placementX.ToString("0")% <input type="range" min="0" max="100" step="1" @bind="placementX" @bind:event="oninput" /></label>
+                <label>Y: @placementY.ToString("0")% <input type="range" min="0" max="100" step="1" @bind="placementY" @bind:event="oninput" /></label>
+                <div class="floorplan-coordinate-exact">
+                    <label>X <input type="number" min="0" max="100" step="1" @bind="placementX" /></label>
+                    <label>Y <input type="number" min="0" max="100" step="1" @bind="placementY" /></label>
+                </div>
+                <button type="button" class="primary" @onclick="SaveExactPosition">Αποθήκευση θέσης</button>
+            </div>
+            <button type="button" class="linkbtn-plain" @onclick="() => selectedForPlacementId = null">Ακύρωση μετακίνησης</button>
+        }
+    </div>
+
+    <div class="floorplan-canvas-wrap">
+        <div class="floorplan-reset-bar">
+            <span class="hint">Για να ξεκινήσεις από την αρχή, αφαίρεσε όλα τα τραπέζια από την κάτοψη.</span>
+            <button type="button" class="danger" @onclick="UnplaceAll">Επαναφορά κάτοψης</button>
+        </div>
+        <div class="floorplan-canvas" @ref="canvasRef"
+             data-placement-table-id="@(selectedForPlacementId?.ToString() ?? "")"
+             data-placement-table-name="@(tables.FirstOrDefault(t => t.Id == selectedForPlacementId)?.Name ?? "")">
+            @foreach (var t in tables.Where(t => (t.PosX is not null && t.PosY is not null) || t.Id == selectedForPlacementId))
+            {
+                <div class="floor-table @(t.Id == selectedForPlacementId ? "selected" : "")" @key="t.Id" data-table-id="@t.Id" style="left:@(GetX(t))%; top:@(GetY(t))%;">
+                    @t.Name
+                    <button type="button" class="floor-table-remove" title="Αφαίρεση από την κάτοψη"
+                            @onclick="() => Unplace(t)" @onclick:stopPropagation="true">✕</button>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+@if (!string.IsNullOrWhiteSpace(placementStatus))
+{
+    <p class="hint" role="status">@placementStatus</p>
+}
+
+@code {
+    private List<RestaurantTable> tables = new();
+    private int? selectedForPlacementId;
+    private ElementReference canvasRef;
+    private DotNetObjectReference<Floorplan>? dotNetRef;
+    private bool jsInitDone;
+    private string? placementStatus;
+    private double placementX = 50;
+    private double placementY = 50;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Configuration.GetValue<bool>("Edition:TakeAwayOnly"))
+        {
+            Nav.NavigateTo("/waiter", forceLoad: true);
+            return;
+        }
+        await Load();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Configuration.GetValue<bool>("Edition:TakeAwayOnly")) return;
+        if (!jsInitDone)
+        {
+            dotNetRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("initFloorplanDrag", canvasRef, dotNetRef);
+            jsInitDone = true;
+        }
+    }
+
+    private async Task Load()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        tables = await db.Tables.OrderBy(t => t.SortOrder).ThenBy(t => t.Name).ToListAsync();
+    }
+
+    private void SelectForPlacement(int id)
+    {
+        if (selectedForPlacementId == id)
+        {
+            selectedForPlacementId = null;
+            return;
+        }
+
+        var table = tables.FirstOrDefault(t => t.Id == id);
+        selectedForPlacementId = id;
+        placementX = table?.PosX ?? 50;
+        placementY = table?.PosY ?? 50;
+        placementStatus = null;
+    }
+
+    private double GetX(RestaurantTable table) => table.Id == selectedForPlacementId ? Math.Clamp(placementX, 0, 100) : table.PosX ?? 50;
+    private double GetY(RestaurantTable table) => table.Id == selectedForPlacementId ? Math.Clamp(placementY, 0, 100) : table.PosY ?? 50;
+
+    private async Task SaveExactPosition()
+    {
+        if (selectedForPlacementId is null) return;
+        await SavePosition(selectedForPlacementId.Value, placementX, placementY);
+        selectedForPlacementId = null;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task UnplaceAll()
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", "Να αφαιρεθούν όλα τα τραπέζια από την κάτοψη; Θα εμφανιστούν ως «χωρίς θέση». Τα τραπέζια και οι παραγγελίες δεν διαγράφονται.");
+        if (!confirmed) return;
+
+        using var db = await DbFactory.CreateDbContextAsync();
+        var placedTables = await db.Tables.Where(t => t.PosX != null || t.PosY != null).ToListAsync();
+        var placedIds = placedTables.Select(t => t.Id).ToList();
+        var hasPendingTransfer = placedIds.Count > 0 && await db.TableTransfers.AnyAsync(t =>
+            t.Stage != TableTransferStage.Completed && t.Stage != TableTransferStage.Rejected &&
+            (placedIds.Contains(t.SourceTableId) || placedIds.Contains(t.TargetTableId)));
+        if (hasPendingTransfer)
+        {
+            placementStatus = "Δεν έγινε επαναφορά: υπάρχει εκκρεμής μεταφορά τραπεζιού. Ολοκλήρωσέ την πρώτα.";
+            return;
+        }
+        foreach (var table in placedTables)
+        {
+            table.PosX = null;
+            table.PosY = null;
+        }
+        await db.SaveChangesAsync();
+        selectedForPlacementId = null;
+        await Load();
+        placementStatus = $"Η κάτοψη επαναφέρθηκε. Αφαιρέθηκαν {placedTables.Count} τραπέζια από την κάτοψη· τα τραπέζια και οι παραγγελίες διατηρήθηκαν.";
+    }
+
+    [JSInvokable]
+    public async Task PlaceSelectedTable(int tableId, double xPercent, double yPercent)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.Tables.FindAsync(tableId);
+        if (entity is not null)
+        {
+            entity.PosX = Math.Clamp(xPercent, 0, 100);
+            entity.PosY = Math.Clamp(yPercent, 0, 100);
+            await db.SaveChangesAsync();
+        }
+
+        selectedForPlacementId = null;
+        await Load();
+        placementStatus = $"Η θέση αποθηκεύτηκε ({xPercent:0.0}%, {yPercent:0.0}%).";
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task ReportFloorplanError(string message)
+    {
+        placementStatus = $"Δεν αποθηκεύτηκε η θέση: {message}";
+        return InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>Καλείται από το JavaScript όταν ο χρήστης αφήνει ένα τραπέζι μετά από σύρσιμο.</summary>
+    [JSInvokable]
+    public async Task SavePosition(int tableId, double xPercent, double yPercent)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.Tables.FindAsync(tableId);
+        if (entity is not null)
+        {
+            entity.PosX = Math.Clamp(xPercent, 0, 100);
+            entity.PosY = Math.Clamp(yPercent, 0, 100);
+            await db.SaveChangesAsync();
+        }
+
+        await InvokeAsync(async () =>
+        {
+            await Load();
+            placementStatus = $"Η θέση αποθηκεύτηκε ({xPercent:0.0}%, {yPercent:0.0}%).";
+            StateHasChanged();
+        });
+    }
+
+    private async Task Unplace(RestaurantTable t)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.Tables.FindAsync(t.Id);
+        if (entity is not null)
+        {
+            entity.PosX = null;
+            entity.PosY = null;
+            await db.SaveChangesAsync();
+        }
+        await Load();
+    }
+
+    public void Dispose()
+    {
+        dotNetRef?.Dispose();
+    }
+}

@@ -1,0 +1,698 @@
+@page "/admin/cashier"
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using RestaurantOrders.Services.Fiscal
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject AuthenticationStateProvider AuthProvider
+@inject PrinterService Printer
+@inject IJSRuntime JS
+@inject EpayWebEcrService EpayPos
+@inject EdpsWebEcrService EdpsPos
+@inject VivaCloudTerminalService VivaPos
+@inject IFiscalDocumentService FiscalDocuments
+@inject FiscalOrderFormService FiscalOutbox
+
+<style>
+    article.content:has(.cashier-page) { max-width:1600px; }
+    .cashier-page { max-width: 1450px; margin: 0 auto; }
+    .cashier-heading { display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap; margin:10px 0 18px; }
+    .cashier-heading h2 { margin:0; color:#1f2a44; }
+    .cashier-heading p { margin:5px 0 0; color:#64748b; }
+    .cashier-date { display:flex; align-items:center; gap:9px; padding:9px 12px; background:white; border:1px solid #dbe3ee; border-radius:12px; font-weight:700; }
+    .cashier-date input { min-height:38px; border:1px solid #cbd5e1; border-radius:8px; padding:6px 10px; }
+    .cashier-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin:14px 0 22px; }
+    .cashier-kpi { background:white; border:1px solid #e0e7f0; border-radius:15px; padding:15px 17px; box-shadow:0 4px 14px rgba(28,42,68,.05); }
+    .cashier-kpi span { display:block; color:#64748b; font-size:.84rem; font-weight:700; }
+    .cashier-kpi strong { display:block; margin-top:7px; color:#1f2a44; font-size:1.4rem; }
+    .cashier-kpi.sales { border-top:4px solid #356db5; }
+    .cashier-kpi.cancel { border-top:4px solid #dc6c63; }
+    .cashier-kpi.paid { border-top:4px solid #3a9561; }
+    .cashier-kpi.pending { border-top:4px solid #e0a33b; }
+    .cashier-section { margin:22px 0; padding:18px; background:white; border:1px solid #e1e7ef; border-radius:16px; box-shadow:0 5px 18px rgba(28,42,68,.045); }
+    .cashier-section h3 { margin:0 0 5px; color:#202c45; }
+    .cashier-section .section-hint { margin:0 0 14px; color:#718096; font-size:.88rem; }
+    .cashier-table-wrap { width:100%; overflow:auto; }
+    .cashier-data-table { width:100%; border-collapse:separate; border-spacing:0; min-width:760px; }
+    .cashier-data-table th { padding:11px 12px; background:#f4f7fb; color:#53627a; text-align:left; font-size:.8rem; text-transform:uppercase; letter-spacing:.025em; white-space:nowrap; }
+    .cashier-data-table td { padding:11px 12px; border-bottom:1px solid #edf0f4; color:#344054; vertical-align:top; }
+    .cashier-data-table tr:last-child td { border-bottom:0; }
+    .cashier-data-table .numeric { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    .cashier-kind { display:inline-flex; padding:4px 8px; border-radius:999px; background:#edf3fb; color:#355d93; font-size:.78rem; font-weight:800; white-space:nowrap; }
+    .cashier-kind.cancel { background:#fff0ee; color:#b5473e; }
+    .cashier-kind.paid { background:#eaf7ef; color:#237044; }
+    .cashier-kind.pending { background:#fff5df; color:#946312; }
+    .cashier-muted { color:#7c8798; font-size:.82rem; }
+    .cashier-amount-negative { color:#b5473e!important; font-weight:800; }
+    .cashier-amount-positive { color:#237044!important; font-weight:800; }
+    .cashier-empty { padding:18px; color:#718096; text-align:center; background:#f8fafc; border-radius:11px; }
+    .cashier-subtotal { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-top:13px; padding-top:12px; border-top:1px solid #e8edf3; color:#344054; font-weight:800; }
+    .cashier-movements { padding:0; overflow:hidden; }
+    .cashier-movements > summary { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 18px; cursor:pointer; list-style:none; user-select:none; }
+    .cashier-movements > summary::-webkit-details-marker { display:none; }
+    .cashier-movements > summary h3 { margin:0; }
+    .cashier-movements > summary:hover { background:#f8faff; }
+    .cashier-movements-hint { display:block; margin-top:5px; color:#718096; font-size:.88rem; }
+    .cashier-movements-toggle { display:inline-flex; flex:0 0 auto; align-items:center; gap:8px; padding:9px 12px; border:1px solid #dbe5f2; border-radius:10px; background:#f4f7fc; color:#36577f; font-size:.86rem; font-weight:800; }
+    .cashier-movements-toggle::after { content:"＋"; font-size:1rem; }
+    .cashier-movements[open] .cashier-movements-toggle::after { content:"−"; }
+    .cashier-movements-content { padding:0 18px 18px; }
+    .cashier-movements-content .section-hint { margin:0 0 14px; }
+    .cashier-login { width:min(420px,100%); margin:10vh auto; padding:28px; background:white; border:1px solid #e1e7ef; border-radius:18px; box-shadow:0 18px 48px rgba(28,42,68,.12); }
+    .cashier-login h3 { margin-top:0; }
+    .preloaded-heading { display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; }
+    .preloaded-heading .section-hint { margin-bottom:0; }
+    .preloaded-button { padding:11px 16px; border:0; border-radius:10px; background:#1f6b50; color:white; font-weight:800; cursor:pointer; }
+    .preloaded-button:disabled { opacity:.6; cursor:wait; }
+    @@media(max-width:600px) { .cashier-section { padding:13px; } .cashier-heading { align-items:stretch; } .cashier-date { justify-content:space-between; } }
+</style>
+
+<div class="cashier-page">
+
+@if (!unlocked)
+{
+    <section class="cashier-login">
+        <div style="font-size:2rem">🧾</div>
+        <h3>Επιβεβαίωση κωδικού</h3>
+        <p class="hint">Για λόγους ασφαλείας, ξαναγράψε τον κωδικό σου για να μπεις στο ταμείο.</p>
+        @if (pinError)
+        {
+            <p class="error">Λάθος κωδικός.</p>
+        }
+        <input type="password" @bind="enteredPin" @bind:event="oninput" placeholder="Κωδικός" />
+        <button @onclick="CheckPin">Είσοδος</button>
+    </section>
+}
+else
+{
+    <header class="cashier-heading">
+        <div>
+            <h2>🧾 Ταμείο &amp; Ημερήσιες κινήσεις</h2>
+            <p>Όσα χτυπήθηκαν, πληρώθηκαν ή ακυρώθηκαν, ακόμη κι αν το τραπέζι παραμένει ανοιχτό.</p>
+        </div>
+        <label class="cashier-date">Ημερήσια εικόνα <input type="date" @bind="activityDate" @bind:after="LoadDailyActivity" /></label>
+    </header>
+
+    <section class="cashier-kpis" aria-label="Ημερήσια σύνολα">
+        <div class="cashier-kpi sales"><span>Χτυπήθηκαν την ημέρα</span><strong>€@dailyActivity.HitTotal.ToString("0.00")</strong></div>
+        <div class="cashier-kpi cancel"><span>Ακυρώσεις ειδών</span><strong>−€@dailyActivity.CancelledTotal.ToString("0.00")</strong></div>
+        <div class="cashier-kpi paid"><span>Πληρωμές που ολοκληρώθηκαν</span><strong>€@dailyActivity.PaidTotal.ToString("0.00")</strong></div>
+        <div class="cashier-kpi pending"><span>Ανοιχτά υπόλοιπα τώρα</span><strong>€@dailyActivity.PendingTotal.ToString("0.00")</strong></div>
+    </section>
+
+    <section class="cashier-section preloaded-section">
+        <div class="preloaded-heading">
+            <div><h3>Τακτοποίηση προφορτώσεων</h3><p class="section-hint">Ελέγχει στο POS όσες προφορτώσεις περιμένουν πληρωμή. Η πληρωμή υποβάλλεται στον πάροχο με τον τρόπο που επέστρεψε το POS.</p></div>
+            <button class="preloaded-button" @onclick="ReconcilePreloadedPaymentsAsync" disabled="@reconcilingPreloads">@(reconcilingPreloads ? "Έλεγχος POS…" : "↻ Τακτοποίηση προφορτώσεων")</button>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(preloadedMessage)) { <p class="status">@preloadedMessage</p> }
+        @if (preloadedRows.Count > 0)
+        {
+            <div class="cashier-table-wrap"><table class="cashier-data-table"><thead><tr><th>Παραστατικό</th><th>Τραπέζι</th><th>POS</th><th>Προφόρτωση</th><th>Ποσό</th><th>Κατάσταση POS</th></tr></thead><tbody>
+                @foreach (var item in preloadedRows)
+                { <tr><td>@item.Series @item.Number</td><td>@item.Table</td><td>@item.Terminal</td><td>@item.CreatedAt.ToLocalTime().ToString("dd/MM HH:mm")</td><td class="numeric">€@item.Amount.ToString("0.00")</td><td>@item.Status</td></tr> }
+            </tbody></table></div>
+        }
+        else if (preloadedChecked) { <div class="cashier-empty">Δεν βρέθηκαν εκκρεμείς προφορτώσεις.</div> }
+        @if (carriedPreloadedRows.Count > 0)
+        {
+            <details style="margin-top:12px">
+                <summary style="cursor:pointer;font-weight:800;color:#52627a">Εκκρεμείς από προηγούμενο κλείσιμο (@carriedPreloadedRows.Count) · παραμένουν διαθέσιμες για τακτοποίηση</summary>
+                <div class="cashier-table-wrap" style="margin-top:10px"><table class="cashier-data-table"><thead><tr><th>Παραστατικό</th><th>Τραπέζι</th><th>POS</th><th>Προφόρτωση</th><th>Ποσό</th><th>Κατάσταση</th></tr></thead><tbody>
+                    @foreach (var item in carriedPreloadedRows)
+                    { <tr><td>@item.Series @item.Number</td><td>@item.Table</td><td>@item.Terminal</td><td>@item.CreatedAt.ToLocalTime().ToString("dd/MM HH:mm")</td><td class="numeric">€@item.Amount.ToString("0.00")</td><td>@item.Status</td></tr> }
+                </tbody></table></div>
+            </details>
+        }
+    </section>
+
+    <section class="cashier-section preloaded-section">
+        <div class="preloaded-heading">
+            <div><h3>Εκκρεμείς διαβιβάσεις παραστατικών</h3><p class="section-hint">Πρώτα ελέγχεται το ίδιο ExternalSystemId στον Parochos. Επαναποστολή γίνεται μόνο όταν ο Parochos επιβεβαιώσει ότι δεν έχει παραλάβει το παραστατικό.</p></div>
+            <button class="preloaded-button" @onclick="LoadPendingFiscalRowsAsync" disabled="@loadingPendingFiscal">@(loadingPendingFiscal ? "Έλεγχος…" : "↻ Ανανέωση")</button>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(pendingFiscalMessage)) { <p class="status">@pendingFiscalMessage</p> }
+        @if (pendingFiscalRows.Count > 0)
+        {
+            <div class="cashier-table-wrap"><table class="cashier-data-table"><thead><tr><th>Παραστατικό</th><th>Τραπέζι</th><th>Ποσό</th><th>Κατάσταση</th><th></th></tr></thead><tbody>
+                @foreach (var item in pendingFiscalRows)
+                {
+                    <tr>
+                        <td>@item.Document</td><td>@item.Table</td><td class="numeric">€@item.Amount.ToString("0.00")</td>
+                        <td>@(item.ErrorMessage ?? item.State)</td>
+                        <td><button @onclick="() => RetryPendingFiscalTransmissionAsync(item)" disabled="@(retryingFiscalOrderId.HasValue)">@(retryingFiscalOrderId == item.OrderId ? "Έλεγχος…" : "Έλεγχος / επαναποστολή")</button></td>
+                    </tr>
+                }
+            </tbody></table></div>
+        }
+        else if (pendingFiscalChecked) { <div class="cashier-empty">Δεν υπάρχουν εκκρεμείς διαβιβάσεις.</div> }
+    </section>
+
+    <section class="cashier-section">
+        <h3>Σύνολα ανά χρήστη</h3>
+        <p class="section-hint">Τα χτυπήματα και οι πληρωμές ακολουθούν τον χρήστη στον οποίο ανήκει η παραγγελία. Τα ανοιχτά υπόλοιπα είναι η τρέχουσα εικόνα.</p>
+        @if (dailyActivity.Employees.Count == 0)
+        {
+            <div class="cashier-empty">Δεν υπάρχουν κινήσεις για την επιλεγμένη ημερομηνία.</div>
+        }
+        else
+        {
+            <div class="cashier-table-wrap">
+                <table class="cashier-data-table">
+                    <thead><tr><th>Χρήστης</th><th class="numeric">Χτυπήματα</th><th class="numeric">Αξία χτυπημάτων</th><th class="numeric">Ακυρώσεις</th><th class="numeric">Πληρώθηκαν</th><th class="numeric">Εκκρεμούν τώρα</th></tr></thead>
+                    <tbody>
+                        @foreach (var employee in dailyActivity.Employees)
+                        {
+                            <tr><td><strong>@employee.Employee</strong></td><td class="numeric">@employee.HitCount</td><td class="numeric">€@employee.HitTotal.ToString("0.00")</td><td class="numeric">−€@employee.CancelledTotal.ToString("0.00")</td><td class="numeric">€@employee.PaidTotal.ToString("0.00")</td><td class="numeric">€@employee.PendingTotal.ToString("0.00")</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            <div class="cashier-subtotal"><span>Καθαρή αξία χτυπημάτων (χτυπήματα − ακυρώσεις)</span><span>€@Math.Max(0, dailyActivity.HitTotal - dailyActivity.CancelledTotal).ToString("0.00")</span></div>
+        }
+    </section>
+
+    <section class="cashier-section">
+        <h3>Ανοιχτά τραπέζια και εκκρεμότητες</h3>
+        <p class="section-hint">Τρέχον υπόλοιπο τώρα, μετά τις επιτυχημένες ολικές και μερικές πληρωμές.</p>
+        @if (dailyActivity.PendingOrders.Count == 0)
+        {
+            <div class="cashier-empty">Δεν υπάρχουν ανοιχτά υπόλοιπα.</div>
+        }
+        else
+        {
+            <div class="cashier-table-wrap">
+                <table class="cashier-data-table">
+                    <thead><tr><th>Τραπέζι</th><th>Χρήστης</th><th>Άνοιξε</th><th class="numeric">Σύνολο</th><th class="numeric">Πληρώθηκε</th><th class="numeric">Υπόλοιπο</th></tr></thead>
+                    <tbody>
+                        @foreach (var pending in dailyActivity.PendingOrders)
+                        {
+                            <tr><td><strong>@pending.Table</strong></td><td>@pending.Employee</td><td>@pending.CreatedAt.ToString("HH:mm")</td><td class="numeric">€@pending.Total.ToString("0.00")</td><td class="numeric">€@pending.Paid.ToString("0.00")</td><td class="numeric"><strong>€@pending.Remaining.ToString("0.00")</strong></td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+
+    <details class="cashier-section cashier-movements">
+        <summary>
+            <div>
+                <h3>Όλες οι κινήσεις</h3>
+                <span class="cashier-movements-hint">Άνοιξέ το μόνο όταν χρειάζεσαι αναλυτική προβολή.</span>
+            </div>
+            <span class="cashier-movements-toggle">Εμφάνιση αναλυτικών κινήσεων · @dailyActivity.Entries.Count</span>
+        </summary>
+        <div class="cashier-movements-content">
+        <p class="section-hint">Χτυπήματα ειδών, ακυρώσεις, εξοφλήσεις, εκκρεμείς πληρωμές, μεταφορές και ανοιχτά υπόλοιπα.</p>
+        @if (dailyActivity.Entries.Count == 0)
+        {
+            <div class="cashier-empty">Δεν υπάρχουν κινήσεις για την επιλεγμένη ημερομηνία.</div>
+        }
+        else
+        {
+            <div class="cashier-table-wrap">
+                <table class="cashier-data-table">
+                    <thead><tr><th>Ώρα</th><th>Χρήστης</th><th>Τραπέζι</th><th>Κίνηση</th><th>Περιγραφή</th><th>Κατάσταση</th><th class="numeric">Ποσό</th></tr></thead>
+                    <tbody>
+                        @foreach (var entry in dailyActivity.Entries)
+                        {
+                            var kindClass = entry.Kind.Contains("Ακύρωση", StringComparison.OrdinalIgnoreCase) ? "cancel" : entry.Kind.Contains("Εξόφληση", StringComparison.OrdinalIgnoreCase) ? "paid" : entry.Kind.Contains("Εκκρεμότητα", StringComparison.OrdinalIgnoreCase) ? "pending" : "";
+                            <tr>
+                                <td>@entry.At.ToString("HH:mm:ss")</td><td>@entry.Employee</td><td>@entry.Table</td>
+                                <td><span class="cashier-kind @kindClass">@entry.Kind</span></td>
+                                <td>@entry.Description@if (entry.OrderId is not null) { <span class="cashier-muted"> · #@entry.OrderId</span> }</td>
+                                <td>@entry.Status</td>
+                                <td class="numeric @(entry.Amount < 0 ? "cashier-amount-negative" : entry.Kind == "Εξόφληση" ? "cashier-amount-positive" : "")">@(entry.Amount < 0 ? "−" : "")€@Math.Abs(entry.Amount).ToString("0.00")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        </div>
+    </details>
+
+    <hr />
+    <h3>Τρέχον Ταμείο</h3>
+    <p class="hint">Παραγγελίες που έχουν κλείσει από το τελευταίο "Κλείσιμο Ημέρας" μέχρι τώρα.</p>
+
+    @if (!currentRows.Any())
+    {
+        <p class="hint">Δεν υπάρχουν εκκρεμείς κλεισμένες παραγγελίες αυτή τη στιγμή.</p>
+    }
+    else
+    {
+        var currentOtherPaymentMethods = AlternativePaymentMethods(currentRows);
+        <table class="admin-table">
+            <thead><tr><th>Υπάλληλος</th><th>Μετρητά</th><th>Κάρτα</th>@foreach (var method in currentOtherPaymentMethods) { <th>@ShortPaymentMethodName(method)</th> }<th>Σύνολο</th><th>Ιδιοκατανάλωση</th><th>Παραγγελίες</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var row in currentRows)
+                {
+                    <tr>
+                        <td>@row.EmployeeName</td>
+                        <td>€@row.CashTotal.ToString("0.00")</td>
+                        <td>€@row.CardTotal.ToString("0.00")</td>
+                        @foreach (var method in currentOtherPaymentMethods)
+                        {
+                            <td>€@AlternativePaymentAmount(row, method).ToString("0.00")</td>
+                        }
+                        <td><strong>€@row.GrandTotal.ToString("0.00")</strong></td>
+                        <td>@row.StaffConsumptionCount · €@row.StaffConsumptionTotal.ToString("0.00")</td>
+                        <td>@row.OrderCount</td>
+                        <td><button @onclick="() => CloseEmployee(row.WaiterUserId, row.EmployeeName)">Κλείσιμο υπαλλήλου</button></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p class="total">
+            <strong>Γενικό σύνολο: €@currentRows.Sum(r => r.GrandTotal).ToString("0.00")</strong>
+        </p>
+        @if (currentOtherPaymentMethods.Count > 0)
+        {
+            <p class="hint"><strong>Σύνολα εναλλακτικών τρόπων:</strong> @string.Join(" · ", currentOtherPaymentMethods.Select(method => $"{ShortPaymentMethodName(method)} €{currentRows.Sum(row => AlternativePaymentAmount(row, method)):0.00}"))</p>
+        }
+    }
+
+    <div class="admin-form">
+        <select @bind="printerId">
+            <option value="0">-- Επιλογή εκτυπωτή για κλείσιμο (γενικό ή ανά υπάλληλο) --</option>
+            @foreach (var p in printers)
+            {
+                <option value="@p.Id">@p.Name</option>
+            }
+        </select>
+        <button class="danger" @onclick="CloseDay" disabled="@(!currentRows.Any() && !preloadedRows.Any())">Κλείσιμο Ημέρας (όλοι)</button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <p class="status">@statusMessage</p>
+    }
+
+    <h3>Ιστορικό Κλεισιμάτων Ταμείου</h3>
+    <p class="hint">Κάθε "Κλείσιμο Ημέρας" εμφανίζεται ξεχωριστά (δεν αθροίζονται μεταξύ τους), ακόμα κι αν έγιναν πολλά την ίδια μέρα.</p>
+
+    <div class="admin-form">
+        <label>Ημερομηνία:</label>
+        <input type="date" @bind="selectedDate" @bind:after="LoadHistory" />
+    </div>
+
+    @if (!history.Any())
+    {
+        <p class="hint">Δεν υπάρχουν κλεισίματα για αυτή την ημερομηνία.</p>
+    }
+    else
+    {
+        @foreach (var record in history)
+        {
+            <div class="dayclose-card">
+                <h4>
+                    @(record.Employees.Count == 1 ? $"Κλείσιμο Υπαλλήλου: {record.Employees[0].EmployeeName}" : "Κλείσιμο Ημέρας")
+                    — @record.ClosedAt.ToString("HH:mm")
+                    <span class="hint">(από: @record.ClosedByName)</span>
+                </h4>
+                @{ var closingOtherPaymentMethods = AlternativePaymentMethods(record.Employees); }
+                <table class="admin-table">
+                    <thead><tr><th>Υπάλληλος</th><th>Μετρητά</th><th>Κάρτα</th>@foreach (var method in closingOtherPaymentMethods) { <th>@ShortPaymentMethodName(method)</th> }<th>Σύνολο</th><th>Ιδιοκατανάλωση</th><th>Παραγγελίες</th></tr></thead>
+                    <tbody>
+                        @foreach (var row in record.Employees)
+                        {
+                            <tr>
+                                <td>@row.EmployeeName</td>
+                                <td>€@row.CashTotal.ToString("0.00")</td>
+                                <td>€@row.CardTotal.ToString("0.00")</td>
+                                @foreach (var method in closingOtherPaymentMethods)
+                                {
+                                    <td>€@AlternativePaymentAmount(row, method).ToString("0.00")</td>
+                                }
+                                <td><strong>€@row.GrandTotal.ToString("0.00")</strong></td>
+                                <td>@row.StaffConsumptionCount · €@row.StaffConsumptionTotal.ToString("0.00")</td>
+                                <td>@row.OrderCount</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                @if (record.Employees.Any(x => x.StaffConsumptionMovements.Count > 0))
+                {
+                    <h5>Κινήσεις ιδιοκατανάλωσης (εκτός εισπράξεων)</h5>
+                    <table class="admin-table"><thead><tr><th>Ώρα</th><th>Χειριστής</th><th>Τραπέζι</th><th>Παραστατικό</th><th>Είδη</th><th>Αξία</th></tr></thead><tbody>
+                        @foreach (var employee in record.Employees)
+                        {
+                            @foreach (var movement in employee.StaffConsumptionMovements)
+                            { <tr><td>@movement.At.ToString("HH:mm")</td><td>@employee.EmployeeName</td><td>@movement.Table</td><td>@movement.Document</td><td>@movement.Items</td><td>€@movement.Amount.ToString("0.00")</td></tr> }
+                        }
+                    </tbody></table>
+                }
+                @if (record.PendingPreloadCount > 0)
+                {
+                    <p class="status">Μεταφέρθηκαν στο ιστορικό κλεισίματος @record.PendingPreloadCount εκκρεμείς προφορτώσεις, συνολικής αξίας €@record.PendingPreloadAmount.ToString("0.00"). Παραμένουν διαθέσιμες για τακτοποίηση POS.</p>
+                }
+                <p class="total"><strong>Σύνολο κλεισίματος: €@record.GrandTotal.ToString("0.00")</strong></p>
+                <a class="export-btn" href="/api/cashier/day-close-pdf?id=@record.Id" target="_blank">⬇ Λήψη PDF</a>
+            </div>
+        }
+    }
+}
+</div>
+
+@code {
+    private bool unlocked;
+    private string enteredPin = "";
+    private bool pinError;
+
+    private List<Services.EmployeeSummary> currentRows = new();
+    private List<PrinterStation> printers = new();
+    private int printerId = 0;
+    private string? statusMessage;
+
+    private DateTime selectedDate = DateTime.Today;
+    private List<Services.DayCloseRecord> history = new();
+    private DateTime activityDate = DateTime.Today;
+    private Services.CashierDailyActivity dailyActivity = new();
+    private bool reconcilingPreloads;
+    private bool preloadedChecked;
+    private string? preloadedMessage;
+    private List<PreloadedCashierRow> preloadedRows = new();
+    private List<PreloadedCashierRow> carriedPreloadedRows = new();
+    private sealed record PreloadedCashierRow(string Series, long? Number, string Table, string Terminal, DateTime CreatedAt, decimal Amount, string Status, int? DayCloseId);
+    private List<PendingFiscalTransmission> pendingFiscalRows = new();
+    private bool loadingPendingFiscal;
+    private bool pendingFiscalChecked;
+    private int? retryingFiscalOrderId;
+    private string? pendingFiscalMessage;
+
+    private static List<PaymentMethod> AlternativePaymentMethods(IEnumerable<Services.EmployeeSummary> rows) => rows
+        .SelectMany(row => row.OtherPaymentTotals.Keys)
+        .Distinct()
+        .OrderBy(PaymentMethodInfo.GetMyDataCode)
+        .ToList();
+
+    private static decimal AlternativePaymentAmount(Services.EmployeeSummary row, PaymentMethod method) =>
+        row.OtherPaymentTotals.TryGetValue(method, out var amount) ? amount : 0m;
+
+    private static string ShortPaymentMethodName(PaymentMethod method) => method switch
+    {
+        PaymentMethod.DomesticBankAccount => "Κατάθεση",
+        PaymentMethod.ForeignBankAccount => "Τράπεζα αλλοδαπής",
+        PaymentMethod.Check => "Επιταγή",
+        PaymentMethod.Credit => "Επί πιστώσει",
+        PaymentMethod.WebBanking => "Web Banking",
+        PaymentMethod.Iris => "IRIS",
+        _ => PaymentMethodInfo.DisplayName(method)
+    };
+
+    private async Task CheckPin()
+    {
+        pinError = false;
+        var authState = await AuthProvider.GetAuthenticationStateAsync();
+        var userId = int.Parse(authState.User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+
+        using var db = await DbFactory.CreateDbContextAsync();
+        var user = await db.Users.FindAsync(userId);
+
+        if (user is null || (user.HasCode && !PasswordHasher.Verify(enteredPin, user.CodeHash!)))
+        {
+            pinError = true;
+            return;
+        }
+
+        unlocked = true;
+        printers = await db.PrinterStations.Where(p => p.ConnectionType != "Sunmi").OrderBy(p => p.Name).ToListAsync();
+        await LoadCurrent();
+        await LoadHistory();
+        await LoadDailyActivity();
+        await RefreshPreloadedRowsAsync();
+        await LoadPendingFiscalRowsAsync();
+    }
+
+    private async Task LoadCurrent()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        currentRows = await Services.CashierService.GetCurrentSummary(db);
+    }
+
+    private async Task LoadHistory()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        history = await Services.CashierService.GetClosingsForDate(db, selectedDate);
+    }
+
+    private async Task LoadDailyActivity()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        dailyActivity = await Services.CashierActivityService.GetForDate(db, activityDate);
+    }
+
+    private async Task ReconcilePreloadedPaymentsAsync()
+    {
+        if (reconcilingPreloads) return;
+        reconcilingPreloads = true;
+        preloadedChecked = true;
+        preloadedMessage = null;
+        preloadedRows.Clear();
+        var messages = new List<string>();
+        try
+        {
+            using var db = await DbFactory.CreateDbContextAsync();
+            var pending = await db.Orders.Include(o => o.RestaurantTable).Include(o => o.Items).ThenInclude(i => i.MenuItem).ThenInclude(m => m!.MenuCategory)
+                .Where(o => o.AadePreloadedStatus == "Pending" && o.AadePreloadedTerminalSettingsId != null && o.AadePreloadedIntentId != null && o.FiscalStatus == FiscalStatus.Issued)
+                .OrderBy(o => o.AadePreloadedAt).ToListAsync();
+            if (pending.Count == 0) { preloadedMessage = "Δεν υπάρχουν προφορτώσεις σε αναμονή."; return; }
+
+            // ePay's WebECR getpending asks the POS to resend the results of
+            // preloaded transactions. Run once per physical terminal before
+            // looking up each order by its CustomerReference.
+            var epayPendingResults = new Dictionary<int, EpayWebEcrService.PendingTransactionsResult>();
+            foreach (var terminalGroup in pending.Where(o => o.AadePreloadedTerminalSettingsId.HasValue)
+                         .GroupBy(o => o.AadePreloadedTerminalSettingsId!.Value))
+            {
+                var terminal = await db.BankPosTerminalSettings.FirstOrDefaultAsync(x => x.Id == terminalGroup.Key);
+                if (terminal is null || !(terminal.Provider.Contains("ePay", StringComparison.OrdinalIgnoreCase) || terminal.Provider.Contains("Euronet", StringComparison.OrdinalIgnoreCase))) continue;
+                var result = await EpayPos.RequestPendingTransactionsAsync(terminal);
+                epayPendingResults[terminalGroup.Key] = result;
+                messages.Add(result.Success
+                    ? $"ePay {terminal.TerminalId}: {result.Message}"
+                    : $"ePay {terminal.TerminalId}: {result.Message}");
+            }
+
+            foreach (var order in pending)
+            {
+                var terminal = await db.BankPosTerminalSettings.FirstOrDefaultAsync(x => x.Id == order.AadePreloadedTerminalSettingsId);
+                if (terminal is null) { messages.Add($"Παραγγελία #{order.Id}: δεν βρέθηκαν οι ρυθμίσεις POS."); continue; }
+                PreloadedPosStatusResult posStatus;
+                if (terminal.Protocol.Contains("Viva", StringComparison.OrdinalIgnoreCase) || terminal.Provider.Contains("Viva", StringComparison.OrdinalIgnoreCase))
+                    posStatus = await VivaPos.GetPreloadedStatusAsync(terminal, order.AadePreloadedIntentId!);
+                else if (terminal.Protocol.Contains("EDPS", StringComparison.OrdinalIgnoreCase) || terminal.Provider.Contains("EDPS", StringComparison.OrdinalIgnoreCase))
+                    posStatus = await EdpsPos.GetPreloadedStatusAsync(terminal, order.AadePreloadedIntentId!);
+                else
+                {
+                    if (order.AadePreloadedTerminalSettingsId is int terminalId && epayPendingResults.TryGetValue(terminalId, out var resendResult) && !resendResult.Success)
+                    {
+                        order.AadePreloadedStatusMessage = "Δεν έγινε λήψη αποτελεσμάτων από το POS μέσω getpending. " + resendResult.Message;
+                        messages.Add($"Παραγγελία #{order.Id}: {order.AadePreloadedStatusMessage}");
+                        await db.SaveChangesAsync();
+                        continue;
+                    }
+                    posStatus = await EpayPos.GetPreloadedStatusAsync(terminal, order.AadePreloadedIntentId!);
+                }
+
+                order.AadePreloadedStatusMessage = posStatus.Message;
+                if (posStatus.State == PreloadedPosState.Paid)
+                {
+                    var actualMethod = posStatus.PaymentMethod ?? posStatus.PaymentType switch
+                    {
+                        1 => PaymentMethod.Iris,
+                        2 or 5 => PaymentMethod.Credit,
+                        _ => PaymentMethod.Card
+                    };
+                    var transactionId = posStatus.TransactionId;
+                    if (string.IsNullOrWhiteSpace(transactionId))
+                    {
+                        messages.Add($"Παραγγελία #{order.Id}: το POS αναφέρει πληρωμή, αλλά δεν επέστρεψε Transaction ID.");
+                        continue;
+                    }
+                    var total = FiscalPayloadBuilder.CalculateTotals(order.Items.Where(i => !i.IsCancelled && i.Quantity > 0).ToList()).Gross;
+                    var paymentInfo = actualMethod switch { PaymentMethod.Iris => "IRIS", PaymentMethod.Credit => "Επί πιστώσει", _ => "Κάρτα" };
+                    var submit = await FiscalDocuments.SubmitPreloadedPaymentAsync(db, order, total, transactionId,
+                        order.ParochosPaymentSignature ?? "", order.CardTerminalId ?? terminal.TerminalId,
+                        paymentInfo, PaymentMethodInfo.GetMyDataCode(actualMethod));
+                    if (submit.Success)
+                    {
+                        order.PaymentMethod = actualMethod;
+                        order.CardTransactionId = transactionId;
+                        order.AadePreloadedStatus = "Settled";
+                        order.AadePreloadedStatusMessage = $"Εξοφλήθηκε στο POS με {paymentInfo} και καταχωρίστηκε στον πάροχο.";
+                        messages.Add($"Παραγγελία #{order.Id}: εξοφλήθηκε ({paymentInfo}).");
+                    }
+                    else
+                    {
+                        order.AadePreloadedStatusMessage = "Το POS επιβεβαίωσε πληρωμή, αλλά η καταχώριση στον πάροχο εκκρεμεί: " + (submit.ErrorMessage ?? "άγνωστο σφάλμα");
+                        messages.Add($"Παραγγελία #{order.Id}: η πληρωμή έγινε, αλλά εκκρεμεί η αποστολή στον πάροχο. {submit.ErrorMessage}");
+                    }
+                }
+                else if (posStatus.State == PreloadedPosState.Cancelled)
+                {
+                    var credit = await FiscalDocuments.CreditIssuedDocumentAsync(db, order.Id, null, "Η προφορτωμένη συναλλαγή ακυρώθηκε στο POS");
+                    if (credit.Success)
+                    {
+                        order.AadePreloadedStatus = "Cancelled";
+                        order.AadePreloadedStatusMessage = "Η συναλλαγή ακυρώθηκε στο POS και εκδόθηκε πιστωτικό παραστατικό.";
+                        messages.Add($"Παραγγελία #{order.Id}: ακυρώθηκε στο POS και εκδόθηκε πιστωτικό.");
+                    }
+                    else
+                    {
+                        order.AadePreloadedStatusMessage = "Το POS ακύρωσε τη συναλλαγή, αλλά απέτυχε η έκδοση πιστωτικού: " + (credit.ErrorMessage ?? "άγνωστο σφάλμα");
+                        messages.Add($"Παραγγελία #{order.Id}: απαιτείται επανάληψη έκδοσης πιστωτικού. {credit.ErrorMessage}");
+                    }
+                }
+                else
+                {
+                    messages.Add($"Παραγγελία #{order.Id}: {posStatus.Message}");
+                }
+                await db.SaveChangesAsync();
+            }
+            await RefreshPreloadedRowsAsync();
+            preloadedMessage = string.Join(" ", messages);
+            await LoadCurrent();
+            await LoadDailyActivity();
+        }
+        catch (Exception ex)
+        {
+            preloadedMessage = "Απέτυχε ο έλεγχος προφορτώσεων: " + ex.Message;
+        }
+        finally { reconcilingPreloads = false; }
+    }
+
+    private async Task<List<PreloadedCashierRow>> LoadPreloadedRowsAsync()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var rows = await db.Orders.Include(o => o.RestaurantTable).Include(o => o.Items).Include(o => o.Items).ThenInclude(i => i.MenuItem)
+            .Where(o => o.AadePreloadedStatus == "Pending" && o.FiscalStatus == FiscalStatus.Issued)
+            .OrderBy(o => o.AadePreloadedAt).ToListAsync();
+        var output = new List<PreloadedCashierRow>();
+        foreach (var order in rows)
+        {
+            var terminal = order.AadePreloadedTerminalSettingsId is int id ? await db.BankPosTerminalSettings.FindAsync(id) : null;
+            var amount = FiscalPayloadBuilder.CalculateTotals(order.Items.Where(i => !i.IsCancelled && i.Quantity > 0).ToList()).Gross;
+            output.Add(new(order.InvoiceSeriesName ?? "Απόδειξη", order.InvoiceNumber, order.RestaurantTable?.Name ?? "—", terminal?.Name ?? "—", order.AadePreloadedAt ?? order.CreatedAt, amount, order.AadePreloadedStatusMessage ?? "Σε αναμονή", order.DayCloseId));
+        }
+        return output;
+    }
+
+    private async Task RefreshPreloadedRowsAsync()
+    {
+        var allRows = await LoadPreloadedRowsAsync();
+        preloadedRows = allRows.Where(x => x.DayCloseId is null).ToList();
+        carriedPreloadedRows = allRows.Where(x => x.DayCloseId is not null).ToList();
+    }
+
+    private async Task LoadPendingFiscalRowsAsync()
+    {
+        if (loadingPendingFiscal) return;
+        loadingPendingFiscal = true;
+        pendingFiscalChecked = true;
+        pendingFiscalMessage = null;
+        try
+        {
+            using var db = await DbFactory.CreateDbContextAsync();
+            pendingFiscalRows = (await FiscalDocuments.GetPendingTransmissionsAsync(db)).ToList();
+        }
+        catch (Exception ex)
+        {
+            pendingFiscalMessage = "Δεν ήταν δυνατή η ανάγνωση των εκκρεμών διαβιβάσεων: " + ex.Message;
+        }
+        finally { loadingPendingFiscal = false; }
+    }
+
+    private async Task RetryPendingFiscalTransmissionAsync(PendingFiscalTransmission row)
+    {
+        var orderId = row.OrderId;
+        if (retryingFiscalOrderId.HasValue) return;
+        retryingFiscalOrderId = orderId;
+        pendingFiscalMessage = null;
+        try
+        {
+            using var db = await DbFactory.CreateDbContextAsync();
+            var result = await FiscalOutbox.CheckAsync(db, row);
+            pendingFiscalMessage = result.Mark > 0 ? $"Το παραστατικό επιβεβαιώθηκε (ΜΑΡΚ {result.Mark})."
+                : result.ErrorMessage ?? "Ο έλεγχος ολοκληρώθηκε χωρίς νέο ΜΑΡΚ.";
+            pendingFiscalRows = (await FiscalDocuments.GetPendingTransmissionsAsync(db)).ToList();
+            await LoadCurrent();
+            await LoadDailyActivity();
+        }
+        catch (Exception ex)
+        {
+            pendingFiscalMessage = "Απέτυχε ο επανέλεγχος: " + ex.Message;
+        }
+        finally { retryingFiscalOrderId = null; }
+    }
+
+    private async Task CloseEmployee(int waiterUserId, string employeeName)
+    {
+        statusMessage = null;
+
+        if (printerId == 0)
+        {
+            statusMessage = "Διάλεξε πρώτα εκτυπωτή.";
+            return;
+        }
+
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"Κλείσιμο ταμείου για {employeeName}; Οι υπόλοιποι υπάλληλοι δεν επηρεάζονται.");
+        if (!confirmed) return;
+
+        var authState = await AuthProvider.GetAuthenticationStateAsync();
+        var userId = int.Parse(authState.User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+
+        using var db = await DbFactory.CreateDbContextAsync();
+        var record = await Services.CashierService.PerformEmployeeClose(db, waiterUserId, userId);
+
+        var station = await db.PrinterStations.FindAsync(printerId);
+        if (station is not null)
+        {
+            var ok = await Printer.PrintDayCloseAsync(station, record);
+            statusMessage = ok
+                ? $"Το ταμείο του/της {employeeName} τυπώθηκε στον εκτυπωτή '{station.Name}'."
+                : $"⚠ Καταγράφηκε, αλλά απέτυχε η εκτύπωση στον '{station.Name}'.";
+        }
+
+        await LoadCurrent();
+        await LoadHistory();
+    }
+
+    private async Task CloseDay()
+    {
+        statusMessage = null;
+
+        if (printerId == 0)
+        {
+            statusMessage = "Διάλεξε πρώτα εκτυπωτή για να τυπωθεί το κλείσιμο.";
+            return;
+        }
+
+        var pendingInfo = preloadedRows.Count > 0
+            ? $" Θα καταγραφούν επίσης {preloadedRows.Count} εκκρεμείς προφορτώσεις (€{preloadedRows.Sum(x => x.Amount):0.00}) και θα παραμείνουν διαθέσιμες για μεταγενέστερη τακτοποίηση."
+            : "";
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"Θέλετε όντως να κάνετε κλείσιμο ημέρας; Το τρέχον ταμείο και ο αριθμός παραγγελιών θα μηδενιστούν.{pendingInfo}");
+        if (!confirmed) return;
+
+        var authState = await AuthProvider.GetAuthenticationStateAsync();
+        var userId = int.Parse(authState.User.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+
+        using var db = await DbFactory.CreateDbContextAsync();
+        var record = await Services.CashierService.PerformDayClose(db, userId);
+
+        var station = await db.PrinterStations.FindAsync(printerId);
+        if (station is not null)
+        {
+            var ok = await Printer.PrintDayCloseAsync(station, record);
+            statusMessage = ok
+                ? $"Το κλείσιμο τυπώθηκε στον εκτυπωτή '{station.Name}'."
+                : $"⚠ Το κλείσιμο καταγράφηκε, αλλά απέτυχε η εκτύπωση στον '{station.Name}'.";
+        }
+
+        await LoadCurrent();
+        await LoadHistory();
+        await RefreshPreloadedRowsAsync();
+    }
+}

@@ -1,0 +1,352 @@
+@page "/admin/tables"
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IConfiguration Configuration
+@inject NavigationManager Nav
+
+<h2>Περιοχές</h2>
+<p class="hint">Φτιάξε "καρτέλες περιοχής" για την οθόνη επιλογής τραπεζιού του σερβιτόρου
+(π.χ. "Σάλα", "Πλατεία"). Δεν είναι υποχρεωτικό — αν δεν φτιάξεις καμία, θα φαίνονται απλά όλα τα τραπέζια μαζί.</p>
+
+<div class="admin-form">
+    <input @bind="newAreaName" placeholder="π.χ. Σάλα" />
+    <button @onclick="AddArea">Προσθήκη περιοχής</button>
+</div>
+
+<div class="area-chip-list">
+    @foreach (var a in areas)
+    {
+        <span class="area-chip">@a.Name <button @onclick="() => DeleteArea(a)">✕</button></span>
+    }
+</div>
+
+@if (areas.Count > 0)
+{
+    <h3>Μέγεθος τραπεζιών ανά περιοχή</h3>
+    <p class="hint">Άφησε κενό για να ισχύει η ρύθμιση καταστήματος (Εμφάνιση → Μέγεθος τραπεζιών). Όλα τα τραπέζια της περιοχής έχουν το ίδιο μέγεθος και κυλούν δεξιά-αριστερά.</p>
+    <div class="area-size-list">
+        @foreach (var a in areas)
+        {
+            <div class="area-size-row" @key="a.Id">
+                <strong>@a.Name</strong>
+                <label>Πλάτος <input type="number" min="@TableTileLimits.MinWidth" max="@TableTileLimits.MaxWidth" placeholder="καταστ." @bind="a.TileWidth" /></label>
+                <label>Ύψος <input type="number" min="@TableTileLimits.MinHeight" max="@TableTileLimits.MaxHeight" placeholder="καταστ." @bind="a.TileHeight" /></label>
+                <label>Σειρές <input type="number" min="1" max="@TableTileLimits.MaxRows" placeholder="καταστ." @bind="a.Rows" /></label>
+                <button @onclick="() => SaveAreaSize(a)">Αποθήκευση</button>
+                <button @onclick="() => ResetAreaSize(a)">Όπως το κατάστημα</button>
+            </div>
+        }
+    </div>
+}
+<style>
+    .area-size-list { display:grid; gap:8px; margin:8px 0 18px; }
+    .area-size-row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:10px 12px; border:1px solid #dbe4f0; border-radius:12px; background:#fff; }
+    .area-size-row strong { min-width:120px; }
+    .area-size-row label { display:flex; align-items:center; gap:6px; font-weight:600; }
+    .area-size-row input { width:90px; padding:6px 8px; }
+</style>
+
+<h2>Τραπέζια</h2>
+<p class="hint">Σύρε (drag) τις κάρτες για να αλλάξεις τη σειρά εμφάνισής τους στον σερβιτόρο.</p>
+
+<div class="admin-form">
+    <input @bind="newName" placeholder="Όνομα τραπεζιού (π.χ. Τραπέζι 1)" />
+    <select @bind="newAreaId">
+        <option value="0">-- Χωρίς περιοχή --</option>
+        @foreach (var a in areas)
+        {
+            <option value="@a.Id">@a.Name</option>
+        }
+    </select>
+    <button @onclick="Add">Προσθήκη</button>
+</div>
+
+<h3>Μαζική προσθήκη τραπεζιών</h3>
+<div class="admin-form">
+    <input @bind="bulkPrefix" placeholder="Όνομα τραπεζιού (π.χ. SALA)" />
+    <label>Πλήθος <input type="number" min="1" max="200" @bind="bulkCount" style="width:90px" /></label>
+    <select @bind="bulkAreaId">
+        <option value="0">-- Χωρίς περιοχή --</option>
+        @foreach (var a in areas) { <option value="@a.Id">@a.Name</option> }
+    </select>
+    <button @onclick="AddBulk">Δημιουργία τραπεζιών</button>
+</div>
+@if (!string.IsNullOrWhiteSpace(message)) { <p class="success">@message</p> }
+
+<div class="table-card-list">
+    <label class="inline-check"><input type="checkbox" @bind="showInactive" /> Εμφάνιση ανενεργών / αρχειοθετημένων</label>
+    @foreach (var t in VisibleTables)
+    {
+        <div class="table-card @(draggedId == t.Id ? "dragging" : "")"
+             draggable="true"
+             @ondragstart="() => draggedId = t.Id"
+             @ondragover="@(() => { })" @ondragover:preventDefault="true"
+             @ondrop="() => Drop(t.Id)">
+            <span class="drag-handle">☰</span>
+            @if (editingId == t.Id)
+            {
+                <input @bind="editingName" aria-label="Νέα ονομασία τραπεζιού" />
+                <button @onclick="() => SaveName(t)">Αποθήκευση</button>
+                <button @onclick="CancelRename">Άκυρο</button>
+            }
+            else
+            {
+                <span class="tname">@t.Name</span>
+                <button @onclick="() => StartRename(t)">Μετονομασία</button>
+            }
+            @if (!t.IsActive)
+            {
+                <span class="hint">Ανενεργό</span>
+            }
+
+            <select @onchange="e => ChangeArea(t, e)">
+                <option value="" selected="@(t.TableAreaId == null)">-- Χωρίς περιοχή --</option>
+                @foreach (var a in areas)
+                {
+                    <option value="@a.Id" selected="@(t.TableAreaId == a.Id)">@a.Name</option>
+                }
+            </select>
+
+            <label class="inline-check"><input type="checkbox" checked="@t.IsActive" @onchange="e => ToggleActive(t, e)" /> Ενεργό</label>
+
+            <button class="danger" @onclick="() => Delete(t)">Διαγραφή</button>
+        </div>
+    }
+</div>
+
+@code {
+    private List<RestaurantTable> tables = new();
+    private List<TableArea> areas = new();
+    private string newName = "";
+    private int newAreaId = 0;
+    private string newAreaName = "";
+    private int? draggedId;
+    private string bulkPrefix = "SALA";
+    private int bulkCount = 10;
+    private int bulkAreaId;
+    private string? message;
+    private int? editingId;
+    private string editingName = "";
+    private bool showInactive;
+    private IEnumerable<RestaurantTable> VisibleTables => showInactive ? tables.Where(t => !t.IsTakeAway) : tables.Where(t => t.IsActive && !t.IsTakeAway);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Configuration.GetValue<bool>("Edition:TakeAwayOnly"))
+        {
+            Nav.NavigateTo("/waiter", forceLoad: true);
+            return;
+        }
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        tables = await db.Tables.OrderBy(t => t.SortOrder).ThenBy(t => t.Name).ToListAsync();
+        areas = await db.TableAreas.OrderBy(a => a.Name).ToListAsync();
+    }
+
+    private async Task AddArea()
+    {
+        if (string.IsNullOrWhiteSpace(newAreaName)) return;
+        using var db = await DbFactory.CreateDbContextAsync();
+        db.TableAreas.Add(new TableArea { Name = newAreaName.Trim() });
+        await db.SaveChangesAsync();
+        newAreaName = "";
+        await Load();
+    }
+
+    private async Task SaveAreaSize(TableArea a)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.TableAreas.FindAsync(a.Id);
+        if (entity is null) return;
+        entity.TileWidth = a.TileWidth is > 0 ? TableTileLimits.Width(a.TileWidth.Value) : null;
+        entity.TileHeight = a.TileHeight is > 0 ? TableTileLimits.Height(a.TileHeight.Value) : null;
+        entity.Rows = a.Rows is > 0 ? TableTileLimits.Rows(a.Rows.Value) : null;
+        await db.SaveChangesAsync();
+        a.TileWidth = entity.TileWidth; a.TileHeight = entity.TileHeight; a.Rows = entity.Rows;
+        message = $"Αποθηκεύτηκε το μέγεθος τραπεζιών για «{a.Name}».";
+    }
+
+    private async Task ResetAreaSize(TableArea a)
+    {
+        a.TileWidth = null; a.TileHeight = null; a.Rows = null;
+        await SaveAreaSize(a);
+    }
+
+    private async Task DeleteArea(TableArea a)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.TableAreas.FindAsync(a.Id);
+        if (entity is not null)
+        {
+            db.TableAreas.Remove(entity);
+            await db.SaveChangesAsync();
+        }
+        await Load();
+    }
+
+    private async Task Add()
+    {
+        if (string.IsNullOrWhiteSpace(newName)) return;
+        using var db = await DbFactory.CreateDbContextAsync();
+        var maxOrder = db.Tables.Any() ? db.Tables.Max(t => t.SortOrder) : 0;
+        db.Tables.Add(new RestaurantTable
+        {
+            Name = newName.Trim(),
+            IsActive = true,
+            TableAreaId = newAreaId == 0 ? null : newAreaId,
+            SortOrder = maxOrder + 1
+        });
+        await db.SaveChangesAsync();
+        newName = ""; newAreaId = 0;
+        await Load();
+    }
+
+    private async Task AddBulk()
+    {
+        message = null;
+        if (string.IsNullOrWhiteSpace(bulkPrefix) || bulkCount is < 1 or > 200) { message = "Βάλε όνομα και πλήθος από 1 έως 200."; return; }
+        using var db = await DbFactory.CreateDbContextAsync();
+        var names = (await db.Tables.Select(t => t.Name).ToListAsync()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var nextOrder = await db.Tables.Select(t => (int?)t.SortOrder).MaxAsync() ?? 0;
+        var created = 0;
+        for (var i = 1; i <= bulkCount; i++)
+        {
+            var tableName = $"{bulkPrefix.Trim()}{i}";
+            if (!names.Add(tableName)) continue;
+            db.Tables.Add(new RestaurantTable { Name = tableName, IsActive = true, TableAreaId = bulkAreaId == 0 ? null : bulkAreaId, SortOrder = ++nextOrder });
+            created++;
+        }
+        await db.SaveChangesAsync();
+        message = $"Δημιουργήθηκαν {created} τραπέζια.";
+        await Load();
+    }
+
+    private void StartRename(RestaurantTable table) { editingId = table.Id; editingName = table.Name; }
+    private void CancelRename() { editingId = null; editingName = ""; }
+    private async Task SaveName(RestaurantTable table)
+    {
+        var name = editingName.Trim();
+        if (string.IsNullOrWhiteSpace(name)) return;
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.Tables.FindAsync(table.Id);
+        if (entity is not null) { entity.Name = name; await db.SaveChangesAsync(); }
+        CancelRename();
+        await Load();
+    }
+
+    private async Task ChangeArea(RestaurantTable t, ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString();
+        int? areaId = string.IsNullOrEmpty(val) ? null : int.Parse(val);
+
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.Tables.FindAsync(t.Id);
+        if (entity is not null)
+        {
+            entity.TableAreaId = areaId;
+            await db.SaveChangesAsync();
+        }
+        await Load();
+    }
+
+    private async Task ToggleActive(RestaurantTable t, ChangeEventArgs e)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.Tables.FindAsync(t.Id);
+        if (entity is not null)
+        {
+            entity.IsActive = (bool)(e.Value ?? false);
+            await db.SaveChangesAsync();
+        }
+        await Load();
+    }
+
+    private async Task Drop(int targetId)
+    {
+        if (draggedId is null || draggedId == targetId)
+        {
+            draggedId = null;
+            return;
+        }
+
+        var draggedIndex = tables.FindIndex(t => t.Id == draggedId);
+        var targetIndex = tables.FindIndex(t => t.Id == targetId);
+        if (draggedIndex < 0 || targetIndex < 0)
+        {
+            draggedId = null;
+            return;
+        }
+
+        var item = tables[draggedIndex];
+        tables.RemoveAt(draggedIndex);
+        tables.Insert(targetIndex, item);
+
+        using var db = await DbFactory.CreateDbContextAsync();
+        for (var i = 0; i < tables.Count; i++)
+        {
+            var entity = await db.Tables.FindAsync(tables[i].Id);
+            if (entity is not null) entity.SortOrder = i;
+        }
+        await db.SaveChangesAsync();
+
+        draggedId = null;
+        await Load();
+    }
+
+    private async Task Delete(RestaurantTable t)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.Tables.FindAsync(t.Id);
+        if (entity is null) return;
+
+        message = null;
+        var hasPendingTransfer = await db.TableTransfers.AnyAsync(x =>
+            x.Stage != TableTransferStage.Completed && x.Stage != TableTransferStage.Rejected &&
+            (x.SourceTableId == t.Id || x.TargetTableId == t.Id));
+        if (hasPendingTransfer)
+        {
+            message = $"Το τραπέζι {t.Name} δεν αφαιρέθηκε: υπάρχει εκκρεμής μεταφορά τραπεζιού.";
+            return;
+        }
+
+        var hasOpenOrder = await db.Orders.AnyAsync(o => o.RestaurantTableId == t.Id && o.Status == OrderStatus.Open);
+        if (hasOpenOrder)
+        {
+            message = $"Το τραπέζι {t.Name} έχει ανοιχτή παραγγελία. Κλείσε ή μετέφερε πρώτα την παραγγελία για να αφαιρεθεί με ασφάλεια.";
+            return;
+        }
+
+        var hasOrderHistory = await db.Orders.AnyAsync(o => o.RestaurantTableId == t.Id);
+        try
+        {
+            if (hasOrderHistory)
+            {
+                // Keep the table row for historical orders and fiscal records,
+                // but remove it from service and the floorplan.
+                entity.IsActive = false;
+                entity.PosX = null;
+                entity.PosY = null;
+                entity.TableAreaId = null;
+                message = $"Το τραπέζι {t.Name} αφαιρέθηκε από τη λειτουργία. Το ιστορικό διατηρήθηκε. Για επαναφορά, επίλεξε «Εμφάνιση ανενεργών / αρχειοθετημένων».";
+            }
+            else
+            {
+                db.Tables.Remove(entity);
+                message = $"Το τραπέζι {t.Name} διαγράφηκε.";
+            }
+
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            message = $"Το τραπέζι {t.Name} δεν διαγράφηκε επειδή συνδέεται με αποθηκευμένα στοιχεία. Δοκίμασε απενεργοποίηση.";
+        }
+
+        await Load();
+    }
+}

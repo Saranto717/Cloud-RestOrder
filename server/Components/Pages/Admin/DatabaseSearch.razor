@@ -1,0 +1,337 @@
+@page "/admin/database-search"
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@using System.Security.Claims
+@using System.Text
+@using System.Text.Json
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject DatabaseExplorerService Explorer
+@inject DatabaseBackupService Backups
+@inject AuthenticationStateProvider AuthProvider
+@inject IJSRuntime JS
+
+<h2>Αναζήτηση και επεξεργασία βάσης</h2>
+<p class="hint">Αναζήτησε σε όλους τους πίνακες ή επίλεξε συγκεκριμένο πίνακα. Μπορείς να αλλάξεις τιμές και να εξαγάγεις τα αποτελέσματα σε JSON ή CSV. Οι κωδικοί εισόδου δεν ανακτώνται· στους χρήστες εμφανίζεται μόνο αν έχει οριστεί κωδικός. Για αλλαγή, χρησιμοποίησε Χρήστες → Ορισμός. Τα μυστικά κλειδιά δεν εμφανίζονται.</p>
+
+<section class="database-sql-panel" aria-busy="@sqlBusy">
+    <h3>SQL αναζήτηση (μόνο ανάγνωση)</h3>
+    <p class="hint">Γράψε ένα SELECT ή WITH ... SELECT. Υποστηρίζονται JOIN μεταξύ πινάκων. Εμφανίζονται έως 500 γραμμές και οι ευαίσθητες στήλες καλύπτονται.</p>
+    <textarea class="database-sql-editor" @bind="sqlText" spellcheck="false" rows="6" placeholder="SELECT c.Id, c.Mark, c.CreatedAt, c.Reason, o.Id AS OrderId&#10;FROM FiscalOrderCancellations AS c&#10;JOIN Orders AS o ON o.Id = c.OrderId&#10;WHERE c.Mark IS NOT NULL;"></textarea>
+    <div class="database-sql-actions">
+        <button type="button" disabled="@sqlBusy" @onclick="ExecuteSqlAsync">@(sqlBusy ? "Εκτελείται…" : "Εκτέλεση SQL")</button>
+        <button type="button" class="export-btn" disabled="@sqlBusy" @onclick="ClearSql">Καθαρισμός</button>
+        @if (sqlResult is { Rows.Count: > 0 })
+        {
+            <button type="button" class="export-btn" disabled="@sqlBusy" @onclick='() => ExportSqlAsync("json")'>Εξαγωγή JSON</button>
+            <button type="button" class="export-btn" disabled="@sqlBusy" @onclick='() => ExportSqlAsync("csv")'>Εξαγωγή CSV / γραμμές</button>
+        }
+    </div>
+    @if (!string.IsNullOrWhiteSpace(sqlMessage))
+    {
+        <p class="@(sqlIsError ? "error" : "status")" role="status">@sqlMessage</p>
+    }
+    @if (sqlResult is not null)
+    {
+        <div class="database-sql-results">
+            <table>
+                <thead><tr>@foreach (var column in sqlResult.Columns) { <th scope="col">@column</th> }</tr></thead>
+                <tbody>
+                    @foreach (var sqlRow in sqlResult.Rows)
+                    {
+                        <tr>@foreach (var value in sqlRow) { <td>@(value ?? "—")</td> }</tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+<form method="get" action="/admin/database-search" class="admin-form database-search-controls">
+    <select name="table">
+        <option value="*" selected="@(selectedTable == "*")">Όλοι οι πίνακες</option>
+        @foreach (var table in tables) { <option value="@table" selected="@(string.Equals(selectedTable, table, StringComparison.OrdinalIgnoreCase))">@table</option> }
+    </select>
+    <input name="q" value="@searchText" placeholder="Αναζήτηση σε πεδία βάσης…" />
+    <button type="submit" disabled="@busy">Αναζήτηση</button>
+    <button type="button" class="export-btn" disabled="@(rows.Count == 0)" @onclick='() => ExportAsync("json")'>Εξαγωγή JSON</button>
+    <button type="button" class="export-btn" disabled="@(rows.Count == 0)" @onclick='() => ExportAsync("csv")'>Εξαγωγή CSV / γραμμές</button>
+</form>
+<p class="hint">Σε συγκεκριμένο πίνακα, άφησε το πεδίο κενό για να εμφανιστούν οι πρώτες εγγραφές. Στους «Όλοι οι πίνακες» γράψε τουλάχιστον 2 χαρακτήρες. Εκεί εμφανίζονται έως 20 αποτελέσματα ανά πίνακα.</p>
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <p class="@(isError ? "error" : "status")">@message</p>
+}
+
+@if (rows.Count > 0)
+{
+    <div class="database-results">
+        @foreach (var row in rows)
+        {
+            <article class="database-record" @key="row.TableName + row.KeyJson">
+                <header><strong>@row.TableName</strong><span>@row.KeyLabel</span></header>
+                <div class="database-record-fields">
+                    @foreach (var cell in row.Cells)
+                    {
+                        <label @key="cell.Name">
+                            <span>@cell.Name @if (cell.IsPrimaryKey) { <small>(κλειδί)</small> }</span>
+                            <input @bind="cell.Value" disabled="@(!cell.Editable || busy)" title="@(cell.Editable ? "Επεξεργάσιμο πεδίο" : "Πεδίο μόνο για ανάγνωση")" />
+                        </label>
+                    }
+                </div>
+                <footer>
+                    @if (!string.Equals(row.TableName, "DatabaseEditAudit", StringComparison.OrdinalIgnoreCase) && row.Cells.Any(c => c.Editable))
+                    {
+                        <input type="password" autocomplete="current-password" placeholder="Κωδικός διαχειριστή" value="@GetAdminCode(row)" @oninput="e => SetAdminCode(row, e.Value?.ToString() ?? string.Empty)" disabled="@busy" />
+                        <button type="button" disabled="@busy" @onclick="() => SaveRowAsync(row)">@(savingToken == Token(row) ? "Αποθήκευση…" : "Αποθήκευση αλλαγών")</button>
+                    }
+                    else
+                    {
+                        <span class="hint">Μόνο για ανάγνωση · δεν έχει πρωτεύον κλειδί ή είναι αρχείο ελέγχου.</span>
+                    }
+                </footer>
+            </article>
+        }
+    </div>
+    @if (hasMore)
+    {
+        <button type="button" disabled="@busy" @onclick="LoadMoreAsync">Φόρτωση επόμενων γραμμών</button>
+    }
+}
+else if (searched && string.IsNullOrWhiteSpace(message))
+{
+    <p class="hint">Δεν βρέθηκαν εγγραφές.</p>
+}
+
+<style>
+    .database-search-controls { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+    .database-search-controls select { min-width:220px; }
+    .database-search-controls input { flex:1 1 280px; min-width:220px; }
+    .database-results { display:flex; flex-direction:column; gap:14px; margin:16px 0; }
+    .database-record { border:1px solid #d5dfec; border-radius:12px; background:#fff; padding:14px; box-shadow:0 3px 12px #22334a12; }
+    .database-record header, .database-record footer { display:flex; flex-wrap:wrap; align-items:center; gap:12px; justify-content:space-between; margin-bottom:10px; }
+    .database-record header span { color:#64748b; font-size:.88rem; }
+    .database-record-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:9px; }
+    .database-record-fields label { display:flex; flex-direction:column; gap:4px; min-width:0; font-size:.82rem; }
+    .database-record-fields label span { font-weight:600; color:#334155; overflow-wrap:anywhere; }
+    .database-record-fields input { min-width:0; width:100%; }
+    .database-record footer { justify-content:flex-end; border-top:1px solid #edf1f6; padding-top:10px; margin:12px 0 0; }
+    .database-record footer input { max-width:230px; }
+    .database-sql-panel { margin:18px 0; padding:16px; border:1px solid #cbd8e8; border-radius:14px; background:#f8fbff; }
+    .database-sql-panel h3 { margin:0 0 6px; }
+    .database-sql-editor { display:block; width:100%; min-height:130px; box-sizing:border-box; padding:12px; border:1px solid #cbd5e1; border-radius:9px; background:#fff; color:#172b4d; font:13px/1.5 Consolas,"Cascadia Code",monospace; resize:none; }
+    .database-sql-actions { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
+    .database-sql-results { max-width:100%; max-height:55vh; overflow:auto; border:1px solid #d5dfec; border-radius:9px; background:#fff; }
+    .database-sql-results table { width:max-content; min-width:100%; border-collapse:collapse; }
+    .database-sql-results th,.database-sql-results td { max-width:420px; padding:7px 9px; border:1px solid #e3e9f1; text-align:left; vertical-align:top; overflow-wrap:anywhere; }
+    .database-sql-results th { position:sticky; top:0; background:#edf3fb; color:#263b59; }
+    @@media(max-width:650px) { .database-record-fields { grid-template-columns:1fr; } }
+</style>
+
+@code {
+    private List<string> tables = new();
+    private List<DatabaseExplorerRow> rows = new();
+    private readonly Dictionary<string, string> adminCodes = new();
+    private string selectedTable = "*";
+    private string searchText = "";
+    private string? message;
+    private string? savingToken;
+    private string sqlText = "";
+    private string? sqlMessage;
+    private DatabaseSqlQueryResult? sqlResult;
+    private bool isError;
+    private bool busy;
+    private bool sqlBusy;
+    private bool sqlIsError;
+    private bool searched;
+    private bool hasMore;
+    private int offset;
+
+    [SupplyParameterFromQuery(Name = "table")]
+    public string? TableQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "q")]
+    public string? SearchQuery { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            tables = await Explorer.GetTablesAsync();
+            selectedTable = TableQuery is null
+                ? tables.FirstOrDefault(t => string.Equals(t, "Users", StringComparison.OrdinalIgnoreCase)) ?? tables.FirstOrDefault() ?? "*"
+                : TableQuery == "*"
+                    ? "*"
+                    : tables.FirstOrDefault(t => string.Equals(t, TableQuery, StringComparison.OrdinalIgnoreCase)) ?? "*";
+            searchText = SearchQuery ?? "";
+
+            // Load the selected table immediately. The native GET form below also
+            // submits search requests without depending on a Blazor click event.
+            await SearchAsync();
+        }
+        catch (Exception ex)
+        {
+            tables.Clear();
+            rows.Clear();
+            message = "Δεν φορτώθηκαν τα δεδομένα της βάσης: " + ex.Message;
+            isError = true;
+        }
+    }
+
+    private async Task SearchAsync()
+    {
+        if (busy) return;
+        if (selectedTable == "*" && searchText.Trim().Length < 2)
+        {
+            message = "Για αναζήτηση σε όλους τους πίνακες γράψε τουλάχιστον 2 χαρακτήρες.";
+            isError = true;
+            return;
+        }
+        busy = true; message = "Αναζητείται στη βάση…"; isError = false; offset = 0;
+        try
+        {
+            rows = await Explorer.SearchAsync(selectedTable, searchText.Trim());
+            searched = true;
+            hasMore = selectedTable != "*" && rows.Count == 50;
+            message = $"Βρέθηκαν {rows.Count} εγγραφές.";
+        }
+        catch (Exception ex) { rows.Clear(); message = "Η αναζήτηση απέτυχε: " + ex.Message; isError = true; }
+        finally { busy = false; }
+    }
+
+    private async Task ExecuteSqlAsync()
+    {
+        if (sqlBusy) return;
+        sqlBusy = true;
+        sqlMessage = "Εκτελείται το ερώτημα…";
+        sqlIsError = false;
+        sqlResult = null;
+        try
+        {
+            sqlResult = await Explorer.ExecuteReadOnlySqlAsync(sqlText);
+            sqlMessage = sqlResult.HasMore
+                ? $"Εμφανίζονται οι πρώτες {sqlResult.Rows.Count} γραμμές. Περιόρισε το ερώτημα για λιγότερα αποτελέσματα."
+                : $"Εμφανίζονται {sqlResult.Rows.Count} γραμμές.";
+        }
+        catch (Exception ex)
+        {
+            sqlMessage = "Το SQL ερώτημα απέτυχε: " + ex.Message;
+            sqlIsError = true;
+        }
+        finally { sqlBusy = false; }
+    }
+
+    private void ClearSql()
+    {
+        sqlText = "";
+        sqlMessage = null;
+        sqlResult = null;
+        sqlIsError = false;
+    }
+
+    private async Task ExportSqlAsync(string format)
+    {
+        if (sqlResult is null || sqlResult.Rows.Count == 0) return;
+        byte[] bytes;
+        string fileName;
+        string contentType;
+        if (format == "json")
+        {
+            bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { columns = sqlResult.Columns, rows = sqlResult.Rows }, new JsonSerializerOptions { WriteIndented = true }));
+            fileName = $"database-sql-{DateTime.Now:yyyyMMdd-HHmmss}.json";
+            contentType = "application/json;charset=utf-8";
+        }
+        else
+        {
+            var csv = new StringBuilder();
+            csv.AppendLine(string.Join(",", sqlResult.Columns.Select(CsvCell)));
+            foreach (var row in sqlResult.Rows)
+                csv.AppendLine(string.Join(",", row.Select(value => CsvCell(value ?? ""))));
+            bytes = new UTF8Encoding(true).GetBytes(csv.ToString());
+            fileName = $"database-sql-{DateTime.Now:yyyyMMdd-HHmmss}.csv";
+            contentType = "text/csv;charset=utf-8";
+        }
+        await JS.InvokeVoidAsync("restaurantOrders.downloadBase64", fileName, contentType, Convert.ToBase64String(bytes));
+    }
+
+    private async Task LoadMoreAsync()
+    {
+        if (busy || selectedTable == "*") return;
+        busy = true;
+        try
+        {
+            offset += 50;
+            var next = await Explorer.SearchAsync(selectedTable, searchText.Trim(), offset);
+            rows.AddRange(next);
+            hasMore = next.Count == 50;
+            message = $"Φορτώθηκαν συνολικά {rows.Count} εγγραφές.";
+        }
+        catch (Exception ex) { message = "Δεν φορτώθηκαν οι επόμενες γραμμές: " + ex.Message; isError = true; }
+        finally { busy = false; }
+    }
+
+    private async Task SaveRowAsync(DatabaseExplorerRow row)
+    {
+        if (busy) return;
+        var token = Token(row);
+        var code = adminCodes.GetValueOrDefault(token, "").Trim();
+        var changed = row.Cells.Where(c => c.Editable && !string.Equals(c.Value ?? "", c.OriginalValue ?? "", StringComparison.Ordinal)).ToList();
+        if (changed.Count == 0) { message = "Δεν υπάρχουν αλλαγές στη συγκεκριμένη εγγραφή."; isError = false; return; }
+        if (string.IsNullOrWhiteSpace(code)) { message = "Πληκτρολόγησε τον κωδικό του συνδεδεμένου διαχειριστή."; isError = true; return; }
+        if (!await JS.InvokeAsync<bool>("confirm", $"Να αποθηκευτούν {changed.Count} αλλαγές στον πίνακα {row.TableName} ({row.KeyLabel})? Θα δημιουργηθεί αντίγραφο ασφαλείας πριν την αλλαγή.")) return;
+
+        busy = true; savingToken = token; message = null; isError = false;
+        try
+        {
+            var auth = await AuthProvider.GetAuthenticationStateAsync();
+            if (!int.TryParse(auth.User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var userId))
+                throw new InvalidOperationException("Δεν βρέθηκε ο συνδεδεμένος λογαριασμός διαχειριστή.");
+            using var db = await DbFactory.CreateDbContextAsync();
+            var admin = await db.Users.FirstOrDefaultAsync(u => u.Id == userId && u.IsActive && u.Role == Role.Admin);
+            if (admin?.CodeHash is null || !PasswordHasher.Verify(code, admin.CodeHash))
+                throw new InvalidOperationException("Ο κωδικός διαχειριστή δεν είναι σωστός ή δεν έχει οριστεί. Όρισε πρώτα κωδικό από τη διαχείριση χρηστών.");
+
+            var backup = await Backups.CreateBackupAsync("pre-edit");
+            var values = row.Cells.Where(c => c.Editable).ToDictionary(c => c.Name, c => c.Value, StringComparer.OrdinalIgnoreCase);
+            await Explorer.SaveRowAsync(row.TableName, row.KeyJson, row.OriginalJson, values, userId);
+            adminCodes[token] = "";
+            rows = await Explorer.SearchAsync(selectedTable, searchText.Trim(), offset);
+            hasMore = selectedTable != "*" && rows.Count >= 50;
+            message = $"Οι αλλαγές αποθηκεύτηκαν. Αντίγραφο ασφαλείας: {backup.FileName}.";
+        }
+        catch (Exception ex) { message = "Δεν αποθηκεύτηκε η αλλαγή: " + ex.Message; isError = true; }
+        finally { busy = false; savingToken = null; }
+    }
+
+    private async Task ExportAsync(string format)
+    {
+        if (rows.Count == 0) return;
+        var safeRows = rows.Select(r => new { table = r.TableName, primaryKey = r.KeyLabel, fields = r.Cells.ToDictionary(c => c.Name, c => c.Value) }).ToList();
+        byte[] bytes;
+        string fileName;
+        string contentType;
+        if (format == "json")
+        {
+            bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(safeRows, new JsonSerializerOptions { WriteIndented = true }));
+            fileName = $"database-search-{DateTime.Now:yyyyMMdd-HHmmss}.json";
+            contentType = "application/json;charset=utf-8";
+        }
+        else
+        {
+            var allColumns = safeRows.SelectMany(r => r.fields.Keys).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var csv = new StringBuilder();
+            csv.AppendLine(string.Join(",", new[] { "Πίνακας", "Πρωτεύον κλειδί" }.Concat(allColumns).Select(CsvCell)));
+            foreach (var row in safeRows)
+                csv.AppendLine(string.Join(",", new[] { row.table, row.primaryKey }.Concat(allColumns.Select(c => row.fields.GetValueOrDefault(c) ?? "")).Select(CsvCell)));
+            bytes = new UTF8Encoding(true).GetBytes(csv.ToString());
+            fileName = $"database-search-{DateTime.Now:yyyyMMdd-HHmmss}.csv";
+            contentType = "text/csv;charset=utf-8";
+        }
+        await JS.InvokeVoidAsync("restaurantOrders.downloadBase64", fileName, contentType, Convert.ToBase64String(bytes));
+    }
+
+    private static string CsvCell(string value) => "\"" + value.Replace("\"", "\"\"") + "\"";
+    private static string Token(DatabaseExplorerRow row) => row.TableName + "|" + row.KeyJson;
+    private string GetAdminCode(DatabaseExplorerRow row) => adminCodes.GetValueOrDefault(Token(row), string.Empty);
+    private void SetAdminCode(DatabaseExplorerRow row, string value) => adminCodes[Token(row)] = value;
+}

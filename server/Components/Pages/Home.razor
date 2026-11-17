@@ -1,0 +1,73 @@
+@page "/"
+@attribute [AllowAnonymous]
+@rendermode InteractiveServer
+@inject NavigationManager Nav
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+@if (isAuthenticated)
+{
+    <p>Μεταφορά...</p>
+}
+else
+{
+    <div class="welcome-wrap restaurant-welcome" style="@(backgroundImage is null ? "" : $"--welcome-image:url('{backgroundImage}')")">
+        <div class="welcome-brand">
+            <span class="welcome-brand-mark" aria-hidden="true">🍴</span>
+            <strong>@displayName</strong>
+            <small>ΕΣΤΙΑΤΟΡΙΟ</small>
+        </div>
+        <div class="welcome-intro">
+            <span class="welcome-kicker">ΣΥΣΤΗΜΑ ΠΑΡΑΓΓΕΛΙΟΛΗΨΙΑΣ</span>
+            <h1>Καλώς ορίσατε</h1>
+            <p class="subtitle">Επίλεξε τον τρόπο που θέλεις να μπεις στην εφαρμογή</p>
+        </div>
+
+        <div class="welcome-menu">
+            <button type="button" class="welcome-btn order" @onclick='() => Nav.NavigateTo("/order-login", forceLoad: true)'>
+                <span class="icon" aria-hidden="true">🍽️</span>
+                <span>Λήψη παραγγελίας</span>
+                <small>Επιλογή χρήστη και τραπεζιού</small>
+            </button>
+
+            <button type="button" class="welcome-btn edit" @onclick='() => Nav.NavigateTo("/login", forceLoad: true)'>
+                <span class="icon" aria-hidden="true">⚙</span>
+                <span>Διαχείριση</span>
+                <small>Κατάλογος, τραπέζια και ρυθμίσεις</small>
+            </button>
+
+            <button type="button" class="welcome-btn adduser" @onclick='() => Nav.NavigateTo("/login?returnUrl=/admin/quick-add-user", forceLoad: true)'>
+                <span class="icon" aria-hidden="true">👥</span>
+                <span>Χρήστες</span>
+                <small>Προσθήκη και επεξεργασία προσωπικού</small>
+            </button>
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private bool isAuthenticated;
+    private string displayName = "Παραγγελιοληψία";
+    private string? backgroundImage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using (var db = await DbFactory.CreateDbContextAsync())
+        {
+            var appearance = await db.RestaurantAppearances.AsNoTracking().FirstOrDefaultAsync(x => x.Id == 1);
+            if (appearance is not null) { displayName = appearance.DisplayName; backgroundImage = appearance.BackgroundImageDataUri; }
+        }
+        var authState = AuthStateTask is null ? null : await AuthStateTask;
+        var user = authState?.User;
+
+        if (user is not null && (user.Identity?.IsAuthenticated ?? false))
+        {
+            isAuthenticated = true;
+            if (user.IsInRole("Admin"))
+                Nav.NavigateTo("/admin/tables", forceLoad: true);
+            else
+                Nav.NavigateTo("/waiter", forceLoad: true);
+        }
+    }
+}

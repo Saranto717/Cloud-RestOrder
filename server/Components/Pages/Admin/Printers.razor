@@ -1,0 +1,225 @@
+@page "/admin/printers"
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject PrinterService PrinterSvc
+
+<h2>Εκτυπωτές</h2>
+<p class="hint">Πρόσθεσε δικτυακό ESC/POS εκτυπωτή ή τον ενσωματωμένο εκτυπωτή Sunmi. Στον Sunmi, η δοκιμή σύνδεσης και εκτύπωσης πρέπει να γίνει ανοίγοντας αυτή την εφαρμογή από την ίδια τη συσκευή Sunmi.</p>
+
+<div class="admin-form" style="align-items:center;gap:9px">
+    <input @bind="newName" placeholder="Όνομα (π.χ. Κουζίνα ή Sunmi V2)" />
+    <select @bind="newConnectionType" aria-label="Τύπος σύνδεσης εκτυπωτή">
+        <option value="Tcp">Δικτυακός ESC/POS</option>
+        <option value="Sunmi">Ενσωματωμένος Sunmi</option>
+    </select>
+    @if (newConnectionType == "Tcp")
+    {
+        <input @bind="newIp" placeholder="IP διεύθυνση" />
+        <input @bind="newPort" placeholder="Θύρα" style="width:75px" />
+        <select @bind="newCodepage">
+            <option value="PC737">Codepage: PC737</option>
+            <option value="1253">Codepage: Windows-1253</option>
+        </select>
+    }
+    else
+    {
+        <span class="hint">Σύνδεση με την υπηρεσία εκτυπωτή της ίδιας συσκευής Android.</span>
+    }
+    <input @bind="newCopies" placeholder="Αντίγραφα" style="width:85px" />
+    <input @bind="newWidth" placeholder="Χαρ/γραμμή" style="width:105px" />
+    <label><input type="checkbox" @bind="newPrintOrders" /> Παραγγελίες</label>
+    <label><input type="checkbox" @bind="newPrintFiscalDocuments" /> Φορολογικά παραστατικά</label>
+    <button @onclick="Add">Προσθήκη</button>
+</div>
+
+<table class="admin-table">
+    <thead><tr><th>Όνομα</th><th>Τύπος</th><th>Προορισμός</th><th>Χρήση</th><th>Αντίγραφα</th><th>Codepage</th><th>Χαρ/γραμμή</th><th></th><th></th></tr></thead>
+    <tbody>
+        @foreach (var p in items)
+        {
+            <tr>
+                <td>@p.Name</td>
+                <td>
+                    <select value="@p.ConnectionType" @onchange="e => UpdateConnectionType(p, e)">
+                        <option value="Tcp">Δικτυακός</option>
+                        <option value="Sunmi">Sunmi</option>
+                    </select>
+                </td>
+                <td>
+                    @if (p.ConnectionType == "Sunmi")
+                    {
+                        <span>Τοπικός εκτυπωτής συσκευής</span>
+                    }
+                    else
+                    {
+                        <input value="@p.IpAddress" @onchange="e => UpdateIpAddress(p, e)" aria-label="IP διεύθυνση εκτυπωτή @p.Name" style="width:135px" />
+                        <span>:@p.Port</span>
+                    }
+                </td>
+                <td>
+                    <label style="display:block;white-space:nowrap"><input type="checkbox" checked="@p.PrintOrders" @onchange="e => UpdateField(p, e, (ent, v) => ent.PrintOrders = ParseBool(v))" /> Παραγγελίες</label>
+                    <label style="display:block;white-space:nowrap"><input type="checkbox" checked="@p.PrintFiscalDocuments" @onchange="e => UpdateField(p, e, (ent, v) => ent.PrintFiscalDocuments = ParseBool(v))" /> Παραστατικά</label>
+                </td>
+                <td><input value="@p.Copies" @onchange="e => UpdateField(p, e, (ent, v) => ent.Copies = ParseIntOr(v, 1))" style="width:55px" /></td>
+                <td>
+                    @if (p.ConnectionType == "Tcp")
+                    {
+                        <select value="@p.Codepage" @onchange="e => UpdateCodepage(p, e)">
+                            <option value="PC737">PC737</option>
+                            <option value="1253">Windows-1253</option>
+                        </select>
+                    }
+                    else { <span>UTF-8 / ESC-POS</span> }
+                </td>
+                <td><input value="@p.PaperWidthChars" @onchange="e => UpdateField(p, e, (ent, v) => ent.PaperWidthChars = ParseIntOr(v, 32))" style="width:60px" /></td>
+                <td>
+                    @if (p.ConnectionType == "Sunmi")
+                    {
+                        <button @onclick="() => TestPrint(p)">Σύνδεση / δοκιμή</button>
+                    }
+                    else
+                    {
+                        <button @onclick="() => TestPrint(p)">Σύνδεση / δοκιμή</button>
+                    }
+                </td>
+                <td><button class="danger" @onclick="() => Delete(p)">Διαγραφή</button></td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+@if (!string.IsNullOrEmpty(statusMessage))
+{
+    <p class="status">@statusMessage</p>
+}
+
+@code {
+    private List<PrinterStation> items = new();
+    private string newName = "", newIp = "";
+    private string newPort = "9100";
+    private string newCopies = "1";
+    private string newCodepage = "PC737";
+    private string newWidth = "42";
+    private string newConnectionType = "Tcp";
+    private bool newPrintOrders = true;
+    private bool newPrintFiscalDocuments = true;
+    private string? statusMessage;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        items = await db.PrinterStations.OrderBy(p => p.Name).ToListAsync();
+    }
+
+    private static int ParseIntOr(string? raw, int fallback) =>
+        int.TryParse(raw, out var v) && v > 0 ? v : fallback;
+    private static bool ParseBool(string? raw) => bool.TryParse(raw, out var value) && value;
+
+    private async Task Add()
+    {
+        if (string.IsNullOrWhiteSpace(newName)) return;
+        var sunmi = newConnectionType == "Sunmi";
+        if (!sunmi && (string.IsNullOrWhiteSpace(newIp) || !System.Net.IPAddress.TryParse(newIp.Trim(), out _)))
+        {
+            statusMessage = "Για δικτυακό εκτυπωτή χρειάζεται έγκυρη IP διεύθυνση.";
+            return;
+        }
+        if (!newPrintOrders && !newPrintFiscalDocuments)
+        {
+            statusMessage = "Επίλεξε αν ο εκτυπωτής θα τυπώνει παραγγελίες ή φορολογικά παραστατικά.";
+            return;
+        }
+        if (!int.TryParse(newPort, out var port)) port = 9100;
+
+        using var db = await DbFactory.CreateDbContextAsync();
+        db.PrinterStations.Add(new PrinterStation
+        {
+            Name = newName.Trim(),
+            ConnectionType = sunmi ? "Sunmi" : "Tcp",
+            IpAddress = sunmi ? "" : newIp.Trim(),
+            Port = sunmi ? 0 : port,
+            Copies = ParseIntOr(newCopies, 1),
+            Codepage = sunmi ? "UTF-8" : newCodepage,
+            PaperWidthChars = sunmi ? Math.Min(ParseIntOr(newWidth, 32), 32) : ParseIntOr(newWidth, 42),
+            PrintOrders = newPrintOrders,
+            PrintFiscalDocuments = newPrintFiscalDocuments,
+            IsActive = true
+        });
+        await db.SaveChangesAsync();
+        newName = ""; newIp = ""; newPort = "9100"; newCopies = "1"; newCodepage = "PC737"; newWidth = "42"; newConnectionType = "Tcp";
+        newPrintOrders = true; newPrintFiscalDocuments = true; statusMessage = "Ο εκτυπωτής προστέθηκε. Αν είναι Sunmi, κάνε τη δοκιμή από την ίδια τη συσκευή.";
+        await Load();
+    }
+
+    private async Task UpdateField(PrinterStation p, ChangeEventArgs e, Action<PrinterStation, string?> apply)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.PrinterStations.FindAsync(p.Id);
+        if (entity is not null)
+        {
+            apply(entity, e.Value?.ToString());
+            await db.SaveChangesAsync();
+        }
+        await Load();
+    }
+
+    private async Task UpdateConnectionType(PrinterStation p, ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString() == "Sunmi" ? "Sunmi" : "Tcp";
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.PrinterStations.FindAsync(p.Id);
+        if (entity is not null)
+        {
+            entity.ConnectionType = value;
+            if (value == "Sunmi") { entity.IpAddress = ""; entity.Port = 0; entity.Codepage = "UTF-8"; entity.PaperWidthChars = Math.Min(entity.PaperWidthChars, 32); }
+            else { entity.IpAddress = ""; entity.Port = 9100; entity.Codepage = "PC737"; entity.PaperWidthChars = 42; }
+            await db.SaveChangesAsync();
+        }
+        await Load();
+    }
+
+    private async Task UpdateIpAddress(PrinterStation p, ChangeEventArgs e)
+    {
+        var newIpAddress = e.Value?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(newIpAddress) || !System.Net.IPAddress.TryParse(newIpAddress, out _))
+        {
+            statusMessage = $"Η IP '{newIpAddress}' δεν είναι έγκυρη. Δεν έγινε αλλαγή.";
+            await Load();
+            return;
+        }
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.PrinterStations.FindAsync(p.Id);
+        if (entity is not null) { entity.IpAddress = newIpAddress; await db.SaveChangesAsync(); statusMessage = $"Η IP του '{entity.Name}' ενημερώθηκε."; }
+        await Load();
+    }
+
+    private async Task UpdateCodepage(PrinterStation p, ChangeEventArgs e)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.PrinterStations.FindAsync(p.Id);
+        if (entity is not null) { entity.Codepage = e.Value?.ToString() ?? "PC737"; await db.SaveChangesAsync(); }
+        await Load();
+    }
+
+    private async Task TestPrint(PrinterStation p)
+    {
+        var ok = await PrinterSvc.PrintTestTicketAsync(p, "ΔΟΚΙΜΗ", "Σύστημα",
+            new[] { ("Δοκιμαστικό είδος", 1, 1.00m, (string?)"Δοκιμή σύνδεσης και ελληνικών", 24m) });
+        statusMessage = ok
+            ? $"Η δοκιμαστική εκτύπωση στάλθηκε στον '{p.Name}'."
+            : p.ConnectionType == "Sunmi"
+                ? $"Αποτυχία Sunmi: {PrinterSvc.LastTestError ?? "δεν υπάρχει σύνδεση με την τοπική υπηρεσία εκτύπωσης"}. Άνοιξε το σύστημα από την εφαρμογή RestaurantOrders SUNMI στη συσκευή."
+                : $"Απέτυχε η σύνδεση με τον εκτυπωτή '{p.Name}'. Έλεγξε IP/θύρα/δίκτυο.";
+    }
+
+    private async Task Delete(PrinterStation p)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.PrinterStations.FindAsync(p.Id);
+        if (entity is not null) { db.PrinterStations.Remove(entity); await db.SaveChangesAsync(); }
+        await Load();
+    }
+}

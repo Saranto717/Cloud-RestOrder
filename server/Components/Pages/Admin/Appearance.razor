@@ -1,0 +1,112 @@
+@page "/admin/appearance"
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<div class="appearance-settings">
+    <h1>Εμφάνιση προγράμματος</h1>
+    <p>Ρύθμισε την ονομασία, την εικόνα φόντου και την ένδειξη χρόνου στα τραπέζια.</p>
+    @if (!string.IsNullOrWhiteSpace(message)) { <p class="appearance-message">@message</p> }
+    <label>Ονομασία καταστήματος</label>
+    <input class="appearance-name" maxlength="80" @bind="appearance.DisplayName" />
+    <label>Εικόνα φόντου</label>
+    <InputFile OnChange="UploadImage" accept="image/png,image/jpeg,image/webp" />
+    <small>PNG, JPG ή WebP έως 2 MB. Η εικόνα αφορά τις οθόνες έναρξης, χρηστών, τραπεζιών και παραγγελίας.</small>
+    @if (!string.IsNullOrWhiteSpace(appearance.BackgroundImageDataUri))
+    {
+        <div class="appearance-preview" style="background-image:url('@appearance.BackgroundImageDataUri')"></div>
+        <button type="button" class="nav-button" @onclick="RemoveImage">Αφαίρεση εικόνας</button>
+    }
+    <label class="appearance-check"><input type="checkbox" @bind="appearance.ShowOccupiedTableTimer" /> Εμφάνιση χρόνου στα κατειλημμένα τραπέζια</label>
+
+    <h2 class="appearance-subtitle">Μέγεθος τραπεζιών</h2>
+    <small>Όλα τα τραπέζια εμφανίζονται στο ίδιο μέγεθος, σε σειρές, με οριζόντια κύλιση. Κάθε περιοχή μπορεί να έχει δικό της μέγεθος (Ρυθμίσεις → Τραπέζια) και κάθε συσκευή μπορεί να μεγαλώσει ή να μικρύνει την προβολή της από την οθόνη τραπεζιών.</small>
+    <div class="appearance-size-presets">
+        <button type="button" class="nav-button" @onclick="() => Preset(110, 86)">Μικρό</button>
+        <button type="button" class="nav-button" @onclick="() => Preset(140, 110)">Μεσαίο</button>
+        <button type="button" class="nav-button" @onclick="() => Preset(180, 140)">Μεγάλο</button>
+    </div>
+    <div class="appearance-size-grid">
+        <label>Πλάτος (px)<input type="number" min="@TableTileLimits.MinWidth" max="@TableTileLimits.MaxWidth" @bind="appearance.TableTileWidth" /></label>
+        <label>Ύψος (px)<input type="number" min="@TableTileLimits.MinHeight" max="@TableTileLimits.MaxHeight" @bind="appearance.TableTileHeight" /></label>
+        <label>Σειρές ανά περιοχή<input type="number" min="1" max="@TableTileLimits.MaxRows" @bind="appearance.TableRows" /></label>
+    </div>
+    <div class="appearance-tile-preview">
+        @for (var i = 1; i <= 3; i++)
+        {
+            <div style="width:@(TableTileLimits.Width(appearance.TableTileWidth))px;height:@(TableTileLimits.Height(appearance.TableTileHeight))px">Τραπέζι @i</div>
+        }
+    </div>
+    <button type="button" class="nav-button appearance-save" @onclick="Save">Αποθήκευση εμφάνισης</button>
+</div>
+
+<style>
+    .appearance-settings { max-width:780px; margin:28px auto; padding:30px; background:white; border:1px solid #dbe4f0; border-radius:22px; box-shadow:0 16px 40px #172b4d12; display:flex; flex-direction:column; gap:14px; }
+    .appearance-settings h1 { margin:0; color:#172b4d; }
+    .appearance-settings p { margin:0 0 8px; color:#52657e; }
+    .appearance-settings label { font-weight:700; color:#172b4d; }
+    .appearance-name { padding:14px; border:1px solid #cbd5e1; border-radius:10px; font-size:1.1rem; }
+    .appearance-settings small { color:#52657e; }
+    .appearance-preview { height:220px; border-radius:14px; background-size:cover; background-position:center; border:1px solid #cbd5e1; }
+    .appearance-check { display:flex; align-items:center; gap:10px; margin-top:10px; }
+    .appearance-check input { width:20px; height:20px; }
+    .appearance-settings .appearance-save { background:#1f6a57; color:white; padding:14px; border-radius:10px; }
+    .appearance-message { background:#e2f5eb; padding:12px; border-radius:8px; }
+    .appearance-subtitle { margin:18px 0 0; color:#172b4d; font-size:1.2rem; }
+    .appearance-size-presets { display:flex; gap:8px; flex-wrap:wrap; }
+    .appearance-size-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+    .appearance-size-grid label { display:flex; flex-direction:column; gap:6px; }
+    .appearance-size-grid input { padding:10px; border:1px solid #cbd5e1; border-radius:10px; font-size:1rem; }
+    .appearance-tile-preview { display:flex; gap:10px; overflow-x:auto; padding:10px; border:1px dashed #cbd5e1; border-radius:14px; background:#f4f8fd; }
+    .appearance-tile-preview div { flex:0 0 auto; display:grid; place-items:center; box-sizing:border-box; border:1px solid #bdcde2; border-radius:14px; background:#fff; color:#12233f; font-weight:800; }
+    @@media(max-width:600px) { .appearance-size-grid { grid-template-columns:1fr; } }
+</style>
+
+@code {
+    private RestaurantAppearance appearance = new();
+    private string? message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        appearance = await db.RestaurantAppearances.AsNoTracking().FirstOrDefaultAsync(x => x.Id == 1) ?? new();
+    }
+
+    private async Task UploadImage(InputFileChangeEventArgs args)
+    {
+        var file = args.File;
+        if (file.Size > 2 * 1024 * 1024 || file.ContentType is not ("image/png" or "image/jpeg" or "image/webp"))
+        {
+            message = "Επίλεξε PNG, JPG ή WebP έως 2 MB.";
+            return;
+        }
+        await using var stream = file.OpenReadStream(2 * 1024 * 1024);
+        using var buffer = new MemoryStream();
+        await stream.CopyToAsync(buffer);
+        appearance.BackgroundImageDataUri = $"data:{file.ContentType};base64,{Convert.ToBase64String(buffer.ToArray())}";
+        message = "Η εικόνα φορτώθηκε. Πάτησε Αποθήκευση.";
+    }
+
+    private void Preset(int width, int height) { appearance.TableTileWidth = width; appearance.TableTileHeight = height; }
+
+    private void RemoveImage() { appearance.BackgroundImageDataUri = null; message = "Πάτησε Αποθήκευση για να αφαιρεθεί η εικόνα."; }
+
+    private async Task Save()
+    {
+        appearance.DisplayName = appearance.DisplayName?.Trim() ?? "";
+        if (appearance.DisplayName.Length == 0) { message = "Συμπλήρωσε ονομασία καταστήματος."; return; }
+        appearance.TableTileWidth = TableTileLimits.Width(appearance.TableTileWidth);
+        appearance.TableTileHeight = TableTileLimits.Height(appearance.TableTileHeight);
+        appearance.TableRows = TableTileLimits.Rows(appearance.TableRows);
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var saved = await db.RestaurantAppearances.FirstOrDefaultAsync(x => x.Id == 1);
+        if (saved is null) db.RestaurantAppearances.Add(appearance);
+        else
+        {
+            saved.DisplayName = appearance.DisplayName; saved.BackgroundImageDataUri = appearance.BackgroundImageDataUri; saved.ShowOccupiedTableTimer = appearance.ShowOccupiedTableTimer;
+            saved.TableTileWidth = appearance.TableTileWidth; saved.TableTileHeight = appearance.TableTileHeight; saved.TableRows = appearance.TableRows;
+        }
+        await db.SaveChangesAsync();
+        message = "Οι ρυθμίσεις εμφάνισης αποθηκεύτηκαν. Ανανέωσε τις ανοιχτές οθόνες για να εφαρμοστούν.";
+    }
+}

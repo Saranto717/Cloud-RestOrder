@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="el">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#10284b">
+  <title>RestaurantOrders · Cloud POS</title>
+  <link rel="stylesheet" href="/pos.css">
+</head>
+<body>
+  <div id="http-warning" class="http-warning" hidden>Η οθόνη είναι διαθέσιμη σε HTTP μόνο για έλεγχο. Για σύνδεση απαιτείται HTTPS.</div>
+  <main id="login-view" class="login-shell">
+    <section class="login-card">
+      <div class="brand-mark">🍽</div>
+      <p class="eyebrow">RESTAURANT ORDERS</p>
+      <h1>Cloud POS</h1>
+      <p class="subhead">Σύνδεση στο κατάστημα</p>
+      <form id="login-form">
+        <label>Email<input name="email" type="email" autocomplete="username" required maxlength="254"></label>
+        <label>Κωδικός<input name="password" type="password" autocomplete="current-password" required maxlength="1024"></label>
+        <button class="primary wide" type="submit">Σύνδεση</button>
+      </form>
+      <p id="login-error" class="notice error" hidden></p>
+      <p class="secure-note">Η σύνδεση γίνεται με κρυπτογράφηση HTTPS.</p>
+    </section>
+  </main>
+
+  <div id="pos-view" class="pos-shell" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark small">🍽</span><div><strong>RestaurantOrders</strong><small>Cloud POS</small></div></div>
+      <div class="top-actions"><span class="user-pill" id="user-email"></span><span class="connection-state" id="connection-state">● Online</span><button class="ghost" id="staff-button" hidden>Χρήστες</button><button class="ghost" id="logout-button">Έξοδος</button></div>
+    </header>
+    <div class="page-heading"><div><p class="eyebrow">ΠΑΡΑΓΓΕΛΙΟΛΗΨΙΑ</p><h1>Τραπέζια</h1><p>Διάλεξε τραπέζι και πρόσθεσε είδη στην παραγγελία.</p></div><button class="ghost" id="refresh-button" aria-label="Ανανέωση">↻ Ανανέωση</button></div>
+    <p id="app-notice" class="notice" hidden></p>
+    <div class="workspace">
+      <section class="table-panel"><div class="section-title"><div><h2>Καταστήματα</h2><small id="table-count"></small></div></div><div id="tables" class="table-grid"></div></section>
+      <section class="order-panel">
+        <div class="order-heading"><div><p class="eyebrow">ΕΠΙΛΕΓΜΕΝΟ ΤΡΑΠΕΖΙ</p><h2 id="order-title">Επίλεξε τραπέζι</h2><p id="order-subtitle">Οι νέες παραγγελίες αποθηκεύονται στο cloud.</p></div><span class="sync-pill"><i></i> Cloud</span></div>
+        <div id="order-empty" class="empty-state"><span>▤</span><strong>Δεν έχεις επιλέξει τραπέζι</strong><p>Οι ανοιχτές παραγγελίες εμφανίζονται εδώ.</p></div>
+        <div id="order-content" hidden>
+          <div id="order-items" class="order-items"></div>
+          <div class="order-total"><span>Σύνολο</span><strong id="order-total">€0,00</strong></div>
+          <div class="add-items-heading"><div><h3>Προσθήκη ειδών</h3><small>Πάτησε σε προϊόν για να το προσθέσεις.</small></div></div>
+          <div id="categories" class="category-tabs"></div>
+          <div id="menu-items" class="menu-grid"></div>
+          <label class="notes-field">Σημείωση παραγγελίας<textarea id="item-notes" rows="2" maxlength="500" placeholder="π.χ. χωρίς ζάχαρη"></textarea></label>
+        </div>
+      </section>
+    </div>
+    <footer class="footer-note">Οι παραγγελίες συγχρονίζονται με το Windows POS όταν είναι συνδεδεμένο στο Internet.</footer>
+  </div>
+
+  <dialog id="staff-dialog" class="staff-dialog">
+    <form method="dialog" class="dialog-head"><div><p class="eyebrow">ΔΙΑΧΕΙΡΙΣΗ ΚΑΤΑΣΤΗΜΑΤΟΣ</p><h2>Λογαριασμοί χρηστών</h2></div><button class="icon-button" value="cancel" aria-label="Κλείσιμο">×</button></form>
+    <div id="staff-list" class="staff-list"></div>
+    <form id="staff-form" class="staff-form">
+      <label>Email<input name="email" type="email" required maxlength="254"></label>
+      <label>Κωδικός (τουλάχιστον 12 χαρακτήρες)<input name="password" type="password" required minlength="12" maxlength="1024"></label>
+      <label>Ρόλος<select name="role"><option value="waiter">Σερβιτόρος</option><option value="admin">Διαχειριστής</option></select></label>
+      <button class="primary" type="submit">Προσθήκη λογαριασμού</button>
+    </form>
+    <p id="staff-notice" class="notice" hidden></p>
+  </dialog>
+  <script src="/pos.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,1196 @@
+@page "/waiter"
+
+@attribute [Authorize(Roles = "Waiter,Admin")]
+
+@rendermode InteractiveServer
+
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject AuthenticationStateProvider AuthProvider
+@inject TableTransferService Transfers
+@inject IConfiguration Configuration
+@inject IFiscalDocumentService FiscalDocuments
+@inject FiscalOrderFormService FiscalOutbox
+@inject FiscalCollisionInspector CollisionInspector
+
+<style>
+    .tables-page {
+        width: 100vw;
+        max-width: 100vw;
+        min-height: calc(100dvh - 52px);
+        margin-left: calc(50% - 50vw);
+        padding: 18px;
+        box-sizing: border-box;
+        background:
+            radial-gradient(ellipse at 12% 0%, rgba(255,255,255,.72), transparent 38%),
+            linear-gradient(135deg,
+                color-mix(in srgb, var(--tables-bg, #eaf1fb) 22%, #edf4ff),
+                color-mix(in srgb, var(--tables-bg, #eaf1fb) 22%, #dce9f8));
+        position: relative;
+        overflow-x: hidden;
+    }
+
+    .tables-page .waiter-topbar h2 { color:#172b4d; letter-spacing:-.025em; }
+    .waiter-topbar-main { display:flex; align-items:center; justify-content:space-between; gap:18px; flex:1 1 420px; min-width:0; }
+    .waiter-topbar-main h2 { margin:0 0 5px; }
+    .waiter-topbar-main p { margin:0; }
+    .takeaway-start-btn { display:flex; align-items:center; gap:12px; min-height:56px; padding:10px 20px; border:1px solid #b9d4fb; border-radius:16px; background:linear-gradient(135deg,#fff 0%,#edf5ff 100%); color:#17345f; box-shadow:0 8px 22px rgba(31,76,138,.13); font:inherit; text-align:left; cursor:pointer; transition:transform .16s ease,box-shadow .16s ease; }
+    .takeaway-start-btn:hover { transform:translateY(-2px); box-shadow:0 12px 26px rgba(31,76,138,.19); }
+    .takeaway-start-icon { display:grid; place-items:center; width:40px; height:40px; flex:0 0 40px; border-radius:13px; background:#dcecff; font-size:22px; }
+    .takeaway-start-btn strong,.takeaway-start-btn small { display:block; }
+    .takeaway-start-btn small { margin-top:2px; color:#63748d; font-size:.76rem; }
+    @@media(max-width:650px) { .waiter-topbar-main { align-items:stretch; flex-direction:column; } .takeaway-start-btn { width:100%; justify-content:center; } }
+    .table-heading-icon { display:inline-grid; place-items:center; width:1.45em; height:1.45em; margin-right:.18em; border-radius:9px; background:#e7effb; font-size:.82em; vertical-align:-.12em; }
+    .table-name-line { display:inline-flex; align-items:center; justify-content:center; gap:.32em; }
+    .table-status-icon { display:inline-grid; place-items:center; width:.72em; height:.72em; color:#159447; font-size:.76em; line-height:1; flex:0 0 auto; }
+    .tables-page .table-grid { gap:10px; }
+    .tables-page.has-venue-image { background-image:linear-gradient(135deg,rgba(232,240,251,.92),rgba(211,226,246,.85)),var(--venue-image); background-size:cover; background-position:center; }
+    .tables-page .table-timer { display:block; font-size:.72em; color:#256342; font-weight:700; margin-top:2px; }
+    .tables-page .table-btn,
+    .tables-page .floor-table-btn {
+        border-radius:13px;
+        border:1px solid #d7e1ef !important;
+        box-shadow:0 5px 14px rgba(33,58,94,.09);
+        transition:transform .16s ease, box-shadow .16s ease, background-color .16s ease;
+    }
+    .tables-page .table-btn:not(.occupied) { background:rgba(255,255,255,.97); }
+    .tables-page .table-btn:hover:not(.occupied),
+    .tables-page .floor-table-btn:hover:not(.occupied) {
+        transform:translateY(-2px);
+        box-shadow:0 8px 18px rgba(33,58,94,.14);
+        background:#fff;
+        color:#172b4d;
+    }
+
+    html, body {
+        overflow-x: hidden;
+    }
+
+    .tables-context-menu {
+        position: fixed;
+        z-index: 5000;
+        width: 280px;
+        background: #fff;
+        border: 1px solid #d8dde6;
+        border-radius: 14px;
+        padding: 16px;
+        box-shadow: 0 12px 35px rgba(0,0,0,.22);
+    }
+
+        .tables-context-menu h4 {
+            margin: 0 0 12px;
+        }
+
+    .bg-field {
+        margin: 10px 0;
+    }
+
+        .bg-field label {
+            display: block;
+            font-size: .82rem;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+
+        .bg-field input[type=color] {
+            width: 100%;
+            height: 44px;
+            border: 1px solid #ccd2dc;
+            border-radius: 9px;
+            padding: 3px;
+            cursor: pointer;
+        }
+
+    .bg-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 14px;
+    }
+
+        .bg-actions button {
+            flex: 1;
+            min-height: 42px;
+            border: 0;
+            border-radius: 9px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+    .bg-save {
+        background: #1f2a44;
+        color: #fff;
+    }
+
+    .bg-reset {
+        background: #eef1f5;
+        color: #263246;
+    }
+
+    .table-style-modal-backdrop { position:fixed; inset:0; z-index:6000; display:grid; place-items:center; padding:16px; background:rgba(14,20,34,.58); }
+    .table-style-modal { width:min(440px,100%); background:#fff; border-radius:18px; padding:22px; box-shadow:0 20px 60px rgba(0,0,0,.25); }
+    .table-style-modal h3 { margin:0 0 8px; }
+    .table-style-fields { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; }
+    .table-style-fields label { display:flex; flex-direction:column; gap:6px; font-size:.88rem; font-weight:700; }
+    .table-style-fields input[type=color] { width:100%; height:42px; border:1px solid #d8dde6; border-radius:9px; padding:3px; }
+    .table-style-fields input[type=number] { height:42px; border:1px solid #d8dde6; border-radius:9px; padding:8px; }
+    .table-style-actions { display:flex; gap:10px; margin-top:18px; }
+    .table-style-actions button { flex:1; min-height:44px; border:0; border-radius:10px; font-weight:800; cursor:pointer; }
+    .table-style-actions .save { background:#1f2a44; color:white; }
+    .table-style-actions .cancel { background:#eef1f5; color:#263246; }
+    .tile-scale-control { display:inline-flex; align-items:center; gap:6px; padding:5px 8px; border:1px solid #c9d8ea; border-radius:12px; background:rgba(255,255,255,.9); }
+    .tile-scale-control button { width:36px; height:36px; border:1px solid #bcd0e6; border-radius:10px; background:#eef5ff; color:#17345f; font-size:1.2rem; font-weight:800; cursor:pointer; }
+    .tile-scale-control button:disabled { opacity:.45; cursor:not-allowed; }
+    .tile-scale-control .tile-scale-reset { font-size:1rem; }
+    .tile-scale-label { color:#52657e; font-size:.82rem; font-weight:700; }
+    .tile-scale-value { min-width:46px; text-align:center; color:#17345f; font-weight:850; font-variant-numeric:tabular-nums; }
+    .order-sent-notice { margin:0 0 12px; padding:11px 14px; border:1px solid #a9dfba; border-radius:10px; background:#ecfdf3; color:#176b36; font-weight:750; }
+    .order-sent-notice.warning { border-color:#f2d08a; background:#fffaeb; color:#8a4b08; }
+    .transfer-mode-banner { display:flex; align-items:center; justify-content:space-between; gap:14px; margin:0 0 16px; padding:14px 18px; border:1px solid #9bbcf0; border-radius:14px; background:linear-gradient(120deg,#eff6ff,#fff); color:#1f2a44; box-shadow:0 6px 18px rgba(31,42,68,.08); }
+    .transfer-mode-banner strong { display:block; margin-bottom:3px; }
+    .transfer-mode-banner p { margin:0; color:#59677d; }
+    .transfer-cancel, .transfer-confirm, .transfer-dialog-cancel { min-height:42px; padding:9px 16px; border:0; border-radius:10px; font:inherit; font-weight:800; cursor:pointer; }
+    .transfer-cancel, .transfer-dialog-cancel { background:#eef2f8; color:#263650; }
+    .transfer-confirm { background:#1f8b4c; color:#fff; }
+    .transfer-confirm:disabled { opacity:.55; cursor:wait; }
+    .transfer-confirmation { position:fixed; inset:0; z-index:10020; display:grid; place-items:center; padding:16px; background:rgba(16,24,40,.58); }
+    .transfer-confirmation-card { width:min(460px,100%); padding:25px; border-radius:20px; background:#fff; box-shadow:0 24px 70px rgba(0,0,0,.28); text-align:center; }
+    .transfer-confirmation-icon { display:grid; place-items:center; width:54px; height:54px; margin:0 auto 12px; border-radius:17px; background:#eaf2ff; color:#315e9f; font-size:26px; }
+    .transfer-confirmation-card h3 { margin:0 0 8px; color:#1f2a44; }
+    .transfer-confirmation-card p { margin:0 0 10px; color:#59677d; }
+    .transfer-confirmation-route { margin:16px 0; padding:14px; border-radius:12px; background:#f5f8fd; color:#1f2a44; font-size:1.08rem; font-weight:850; }
+    .transfer-confirmation-actions { display:flex; justify-content:center; gap:10px; margin-top:18px; }
+    .tname.table-occupied { color:#176b36 !important; font-weight:900 !important; }
+    .table-btn.occupied, .floor-table-btn.occupied { background:#c9f2d6 !important; border-color:#70c08a !important; color:#14532d !important; box-shadow:0 4px 12px rgba(34,130,72,.16); }
+    .table-btn.occupied:hover, .floor-table-btn.occupied:hover { background:#b8ebc9 !important; }
+    .pending-fiscal-launch { position:fixed; right:20px; bottom:calc(18px + env(safe-area-inset-bottom)); z-index:4500; display:flex; align-items:center; gap:10px; min-height:52px; padding:10px 16px; border:1px solid #1d6c52; border-radius:15px; background:linear-gradient(135deg,#176b54,#21876a); color:#fff; box-shadow:0 12px 30px rgba(15,78,59,.28); font:inherit; font-weight:850; cursor:pointer; }
+    .pending-fiscal-launch:hover { filter:brightness(1.06); transform:translateY(-1px); }
+    .pending-fiscal-count { display:grid; place-items:center; min-width:26px; height:26px; padding:0 6px; border-radius:999px; background:#fff; color:#176b54; font-size:.82rem; }
+    .pending-fiscal-backdrop { position:fixed; inset:0; z-index:11000; display:grid; place-items:center; padding:16px; background:rgba(13,22,38,.62); }
+    .pending-fiscal-dialog { width:min(760px,100%); max-height:min(82dvh,760px); display:flex; flex-direction:column; overflow:hidden; border:1px solid #dce5ef; border-radius:20px; background:#fff; box-shadow:0 28px 80px rgba(0,0,0,.32); }
+    .pending-fiscal-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:20px 22px 14px; border-bottom:1px solid #e8edf4; }
+    .pending-fiscal-heading h3 { margin:0; color:#172b4d; }
+    .pending-fiscal-heading p { margin:5px 0 0; color:#64748b; font-size:.9rem; }
+    .pending-fiscal-close { width:40px; height:40px; border:0; border-radius:12px; background:#f1f5f9; color:#334155; font-size:1.25rem; cursor:pointer; }
+    .pending-fiscal-message { margin:12px 18px 0; padding:11px 13px; border-radius:11px; background:#eff6ff; color:#1e3a5f; font-weight:700; }
+    .pending-fiscal-message.error { background:#fff7ed; color:#9a3412; }
+    .pending-fiscal-list { display:grid; gap:10px; overflow:auto; padding:16px 18px; }
+    .pending-fiscal-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:14px; padding:13px 14px; border:1px solid #e0e8f1; border-radius:14px; background:#fbfdff; }
+    .pending-fiscal-row strong { display:block; color:#172b4d; }
+    .pending-fiscal-row small { display:block; margin-top:4px; color:#64748b; overflow-wrap:anywhere; }
+    .pending-fiscal-actions { display:flex; flex-direction:column; gap:8px; }
+    .pending-fiscal-row button,.pending-fiscal-batch { min-height:42px; padding:9px 13px; border:0; border-radius:10px; background:#176b54; color:#fff; font:inherit; font-weight:800; cursor:pointer; }
+    .pending-fiscal-print { background:#9a6511 !important; }
+    .pending-fiscal-clean { background:#a33535 !important; }
+    .pending-fiscal-message { white-space:pre-wrap; }
+    .pending-fiscal-archive-link { border:0; background:transparent; color:#24548a; cursor:pointer; font-weight:700; }
+    .pending-fiscal-row button:disabled,.pending-fiscal-batch:disabled { opacity:.55; cursor:wait; }
+    .pending-fiscal-footer { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:14px 18px; border-top:1px solid #e8edf4; background:#f8fafc; }
+    .pending-fiscal-footer span { color:#64748b; font-size:.85rem; }
+    @@media(max-width:600px) { .pending-fiscal-launch { left:12px; right:12px; bottom:calc(12px + env(safe-area-inset-bottom)); justify-content:center; } .pending-fiscal-row { grid-template-columns:1fr; } .pending-fiscal-actions,.pending-fiscal-row button { width:100%; } .pending-fiscal-footer { align-items:stretch; flex-direction:column; } }
+</style>
+
+<div class="tables-page @(venueImage is null ? "" : "has-venue-image")" style="--tables-bg:@pageBackground;--venue-image:url('@venueImage')" @oncontextmenu="OpenBackgroundMenu" @oncontextmenu:preventDefault="true">
+
+    <div class="waiter-topbar">
+
+        <div class="waiter-topbar-main">
+          <div>
+            <h2><span class="table-heading-icon" aria-hidden="true">@(TakeAwayOnlyEdition ? "🥡" : "🪑")</span> @(TakeAwayOnlyEdition ? "Take Away" : "Επιλογή Τραπεζιού")</h2>
+            <p class="hint">@(TakeAwayOnlyEdition ? "Ανοίγει αυτόματα νέα παραγγελία Take Away." : "Πάτησε σε τραπέζι για παραγγελία. Για αλλαγές εμφάνισης, ενεργοποίησε πρώτα τη διαχείριση εμφάνισης.")</p>
+          </div>
+          @if (!transferMode)
+          {
+              <button class="takeaway-start-btn" type="button" disabled="@takeAwayStartBusy" @onclick="StartTakeAwayAsync">
+                  <span class="takeaway-start-icon" aria-hidden="true">🥡</span>
+                  <span><strong>@(takeAwayStartBusy ? "Άνοιγμα…" : "Take Away")</strong><small>Νέα παραγγελία σε πακέτο</small></span>
+              </button>
+          }
+        </div>
+
+        @if (!TakeAwayOnlyEdition)
+        {
+            <div class="tile-scale-control" title="Μέγεθος τραπεζιών μόνο σε αυτή τη συσκευή">
+                <span class="tile-scale-label">Μέγεθος</span>
+                <button type="button" aria-label="Μικρότερα τραπέζια" disabled="@(deviceScale <= TableTileLimits.MinDeviceScale)" @onclick="() => ChangeDeviceScaleAsync(-10)">−</button>
+                <span class="tile-scale-value">@deviceScale%</span>
+                <button type="button" aria-label="Μεγαλύτερα τραπέζια" disabled="@(deviceScale >= TableTileLimits.MaxDeviceScale)" @onclick="() => ChangeDeviceScaleAsync(10)">+</button>
+                @if (deviceScale != 100)
+                {
+                    <button type="button" class="tile-scale-reset" aria-label="Επαναφορά μεγέθους" @onclick="() => ChangeDeviceScaleAsync(100 - deviceScale)">↺</button>
+                }
+            </div>
+        }
+        <AuthorizeView Roles="Admin" Context="adminCtx">
+            <a class="cashier-btn" href="/admin/cashier">🧾 Ταμείο</a>
+        </AuthorizeView>
+        @if (!TakeAwayOnlyEdition)
+        {
+        <AuthorizeView Roles="Admin" Context="tableStyleAdmin">
+            <button class="linkbtn-plain" type="button" @onclick="ToggleAppearanceMode">@(appearanceEditMode ? "✅ Τέλος διαχείρισης εμφάνισης" : "🎨 Διαχείριση εμφάνισης")</button>
+            @if (appearanceEditMode)
+            {
+                <button class="linkbtn-plain" type="button" @onclick="OpenBulkTableStyle">🎨 Χρώματα όλων των τραπεζιών</button>
+                <span class="hint">Η διαχείριση εμφάνισης είναι ενεργή. Κράτησε πατημένο τραπέζι ή το φόντο για ρυθμίσεις.</span>
+            }
+        </AuthorizeView>
+        }
+
+    </div>
+
+    @if (SentNotice)
+    {
+        <div class="order-sent-notice">Η παραγγελία στάλθηκε. Το ποσό της νέας παραγγελίας αφαιρέθηκε από το πρόχειρο.</div>
+    }
+    @if (KitchenPrintErrorNotice)
+    {
+        <div class="order-sent-notice warning" role="alert">Η παραγγελία καταχωρήθηκε, αλλά απέτυχε η εκτύπωση σε έναν ή περισσότερους εκτυπωτές κουζίνας/μπαρ. Τα είδη είναι απεσταλμένα. Έλεγξε την κουζίνα πριν επιλέξεις επανεκτύπωση.</div>
+    }
+    @if (FiscalOffline is 1 or 2)
+    {
+        <div class="order-sent-notice warning">@(FiscalOffline == 1 ? "Το δελτίο εκδόθηκε. Δεν υπάρχει σύνδεση με τον πάροχο· εκκρεμεί η διαβίβαση." : "Το δελτίο εκδόθηκε. Ο πάροχος δεν έχει σύνδεση με την ΑΑΔΕ· εκκρεμεί επιβεβαίωση.")</div>
+    }
+    @if (FiscalErrorNotice)
+    {
+        <div class="order-sent-notice warning">Η παραγγελία στάλθηκε και το Δελτίο Παραγγελίας διατηρήθηκε για ασφαλή έλεγχο στον πάροχο. Δεν έγινε δεύτερη έκδοση.</div>
+    }
+    @if (FiscalPrintErrorNotice)
+    {
+        <div class="order-sent-notice warning">Η παραγγελία στάλθηκε, αλλά απέτυχε η εκτύπωση του φορολογικού δελτίου.</div>
+    }
+    @if (InventoryErrorNotice)
+    {
+        <div class="order-sent-notice warning" role="alert">Η παραγγελία στάλθηκε, αλλά δεν ενημερώθηκε το απόθεμα. Ενημέρωσε τον διαχειριστή και έλεγξε τις κινήσεις αποθήκης πριν από νέα καταχώριση.</div>
+    }
+    @if (transferMode)
+    {
+        <div class="transfer-mode-banner">
+            <div><strong>🔀 Μεταφορά από «@transferSourceName»</strong><p>Πάτησε στο τραπέζι προορισμού στην κάτοψη. Θα ζητηθεί επιβεβαίωση πριν γίνει η μεταφορά.</p></div>
+            <button class="transfer-cancel" type="button" @onclick="CancelTransferMode">Ακύρωση μεταφοράς</button>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(transferPageMessage))
+    {
+        <div class="order-sent-notice warning" role="alert">@transferPageMessage</div>
+    }
+
+    @if (showTransferConfirmation && transferDestination is not null)
+    {
+        <div class="transfer-confirmation" role="dialog" aria-modal="true" aria-labelledby="transfer-confirm-title" @onclick="CancelDestinationConfirmation">
+            <section class="transfer-confirmation-card" @onclick:stopPropagation="true">
+                <div class="transfer-confirmation-icon" aria-hidden="true">🔀</div>
+                <h3 id="transfer-confirm-title">Επιβεβαίωση μεταφοράς</h3>
+                <p>Να μεταφερθεί όλη η παραγγελία στο επιλεγμένο τραπέζι;</p>
+                <div class="transfer-confirmation-route">@transferSourceName <span aria-hidden="true">→</span> @transferDestination.Name</div>
+                @if (occupiedTableIds.Contains(transferDestination.Id))
+                {
+                    <p>Το τραπέζι προορισμού είναι κατειλημμένο. Οι παραγγελίες θα συγχωνευτούν, εφόσον επιτρέπεται.</p>
+                }
+                @if (!string.IsNullOrWhiteSpace(transferPageMessage)) { <p class="error" role="alert">@transferPageMessage</p> }
+                <div class="transfer-confirmation-actions">
+                    <button class="transfer-dialog-cancel" type="button" disabled="@transferBusy" @onclick="CancelDestinationConfirmation">Άκυρο</button>
+                    <button class="transfer-confirm" type="button" disabled="@transferBusy" @onclick="ConfirmFloorplanTransferAsync">@(transferBusy ? "Μεταφορά…" : "Ναι, μεταφορά")</button>
+                </div>
+            </section>
+        </div>
+    }
+
+    @if (showTableStyleEditor)
+    {
+        <div class="table-style-modal-backdrop" @onclick="CloseTableStyleEditor">
+            <section class="table-style-modal" role="dialog" aria-modal="true" aria-label="Εμφάνιση τραπεζιού" @onclick:stopPropagation="true">
+                <h3>🎨 @(applyTableStyleToAll ? "Εμφάνιση όλων των τραπεζιών" : $"Εμφάνιση: {tables.FirstOrDefault(t => t.Id == editingTableStyleId)?.Name}")</h3>
+                <p class="hint">Ρύθμισε τα χρώματα και το μέγεθος γραμμάτων.</p>
+                <div class="table-style-fields">
+                    <label>Χρώμα κουτιού<input type="color" @bind="editingTableBackground" /></label>
+                    <label>Χρώμα γραμμάτων<input type="color" @bind="editingTableText" /></label>
+                    <label>Χρώμα περιγράμματος<input type="color" @bind="editingTableBorder" /></label>
+                    <label>Μέγεθος γραμμάτων<input type="number" min="10" max="40" @bind="editingTableFontSize" /></label>
+                </div>
+                <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-weight:700"><input type="checkbox" @bind="editingTableBold" /> Έντονα γράμματα</label>
+                <div class="table-style-actions">
+                    <button class="cancel" @onclick="CloseTableStyleEditor">Ακύρωση</button>
+                    <button class="save" @onclick="SaveTableStyleAsync">Αποθήκευση</button>
+                </div>
+            </section>
+        </div>
+    }
+
+    @if (TakeAwayOnlyEdition)
+    {
+        <div class="order-sent-notice" role="status">Ανοίγει η νέα παραγγελία Take Away…</div>
+    }
+    else
+    {
+    @if (areas.Count > 0)
+    {
+        <div class="category-tabs">
+
+            <button class="cat-tab @(selectedAreaId == 0 ? "active" : "")"
+                    @onclick="() => selectedAreaId = 0">
+                Όλα τα τραπέζια
+            </button>
+
+            @foreach (var a in areas)
+            {
+                <button class="cat-tab @(selectedAreaId == a.Id ? "active" : "")"
+                        @onclick="() => selectedAreaId = a.Id">
+                    @a.Name
+                </button>
+            }
+
+        </div>
+    }
+
+    @if (showBackgroundMenu)
+    {
+        <div class="tables-context-menu" style="left:@(menuX)px; top:@(menuY)px" @onclick:stopPropagation="true">
+            <h4>🎨 Φόντο σελίδας</h4>
+            <div class="bg-field">
+                <label>Χρώμα φόντου</label>
+                <input type="color" @bind="editingBackground" />
+            </div>
+            <div class="bg-actions">
+                <button class="bg-reset" @onclick="ResetBackground">Επαναφορά</button>
+                <button class="bg-save" @onclick="SaveBackground">Αποθήκευση</button>
+            </div>
+        </div>
+    }
+
+    @if (PositionedTables.Any())
+    {
+        <div class="floorplan-view">
+
+            @foreach (var t in PositionedTables)
+            {
+                var total = totalsByTable.GetValueOrDefault(t.Id, 0m);
+
+                <button class="floor-table-btn @(occupiedTableIds.Contains(t.Id) ? "occupied" : "")"
+                        @key="t.Id"
+                        style="left:@(t.PosX)%; top:@(t.PosY)%; @GetTableTileStyle(t) @GetFloorTileSizeStyle(t)"
+                        @oncontextmenu="() => OpenTableStyle(t)"
+                        @oncontextmenu:preventDefault="true"
+                        @oncontextmenu:stopPropagation="true"
+                        @onclick="() => GoToTable(t.Id)">
+
+                    <span class="table-name-line">
+                        @if (occupiedTableIds.Contains(t.Id))
+                        {
+                            <span class="table-status-icon" title="Κατειλημμένο" aria-label="Κατειλημμένο">●</span>
+                        }
+                        <span class="tname @(occupiedTableIds.Contains(t.Id) ? "table-occupied" : "")" style="font-size:inherit;color:inherit;font-weight:inherit">@t.Name</span>
+                    </span>
+                    @if (pendingTransferTables.Contains(t.Id))
+                    {
+                        <span class="tamount" style="font-size:inherit;color:inherit;font-weight:inherit">Εκκρεμής μεταφορά</span>
+                    }
+                    else if (total > 0)
+                    {
+                        <span class="tamount" style="font-size:inherit;color:inherit;font-weight:inherit">€@total.ToString("0.00")</span>
+                    }
+                    @if (showOccupiedTimer && occupiedTableIds.Contains(t.Id)) { <span class="table-timer">@GetOccupiedDuration(t.Id)</span> }
+
+                </button>
+            }
+
+        </div>
+    }
+
+    @if (UnpositionedTables.Any())
+    {
+        @if (PositionedTables.Any())
+        {
+            <h3>Χωρίς τοποθέτηση στην κάτοψη</h3>
+        }
+
+        <div class="table-area-list">
+        @foreach (var areaGroup in UnpositionedTables.GroupBy(t => t.TableAreaId))
+        {
+            var areaName = areas.FirstOrDefault(a => a.Id == areaGroup.Key)?.Name ?? "Τραπέζια";
+            <section class="table-area-section">
+                <h3><span aria-hidden="true">@(areaName.Contains("έξ", StringComparison.OrdinalIgnoreCase) ? "☂" : "⌂")</span> @areaName <small>(@areaGroup.Count())</small></h3>
+                <div class="table-strip-scroll">
+                <div class="table-grid table-strip" style="@GetStripStyle(areaGroup.Key, areaGroup.Count())">
+            @foreach (var t in areaGroup)
+            {
+                var total = totalsByTable.GetValueOrDefault(t.Id, 0m);
+
+                <button class="table-btn @(occupiedTableIds.Contains(t.Id) ? "occupied" : "")"
+                        style="@GetTableTileStyle(t)"
+                        @oncontextmenu="() => OpenTableStyle(t)"
+                        @oncontextmenu:preventDefault="true"
+                        @oncontextmenu:stopPropagation="true"
+                        @onclick="() => GoToTable(t.Id)">
+
+                    <span class="table-name-line">
+                        @if (occupiedTableIds.Contains(t.Id))
+                        {
+                            <span class="table-status-icon" title="Κατειλημμένο" aria-label="Κατειλημμένο">●</span>
+                        }
+                        <span class="tname @(occupiedTableIds.Contains(t.Id) ? "table-occupied" : "")" style="font-size:inherit;color:inherit;font-weight:inherit">@t.Name</span>
+                    </span>
+                    @if (pendingTransferTables.Contains(t.Id))
+                    {
+                        <span class="tamount" style="font-size:inherit;color:inherit;font-weight:inherit">Εκκρεμής μεταφορά</span>
+                    }
+                    else if (total > 0)
+                    {
+                        <span class="tamount" style="font-size:inherit;color:inherit;font-weight:inherit">€@total.ToString("0.00")</span>
+                    }
+                    @if (showOccupiedTimer && occupiedTableIds.Contains(t.Id)) { <span class="table-timer">@GetOccupiedDuration(t.Id)</span> }
+
+                </button>
+            }
+                </div>
+                </div>
+            </section>
+        }
+        </div>
+    }
+    }
+
+    @if (pendingFiscalRows.Any(r => r.BatchId is null))
+    {
+        <button class="pending-fiscal-launch" type="button" @onclick="OpenPendingFiscalModal">
+            <span aria-hidden="true">↥</span>
+            <span>Διαβίβαση παραστατικών</span>
+            <span class="pending-fiscal-count">@pendingFiscalRows.Count(r => r.BatchId is null)</span>
+        </button>
+    }
+
+    @if (showPendingFiscalModal)
+    {
+        <div class="pending-fiscal-backdrop" role="dialog" aria-modal="true" aria-labelledby="pending-fiscal-title" @onclick="ClosePendingFiscalModal">
+            <section class="pending-fiscal-dialog" @onclick:stopPropagation="true">
+                <header class="pending-fiscal-heading">
+                    <div>
+                        <h3 id="pending-fiscal-title">Εκκρεμείς διαβιβάσεις</h3>
+                        <p>Πρώτα ελέγχεται αν ο Parochos έχει ήδη παραλάβει το παραστατικό. Επαναποστολή γίνεται μόνο όταν επιβεβαιωθεί ότι λείπει.</p>
+                    </div>
+                    <button class="pending-fiscal-close" type="button" aria-label="Κλείσιμο" @onclick="ClosePendingFiscalModal">×</button>
+                </header>
+                @if (!string.IsNullOrWhiteSpace(pendingFiscalMessage))
+                {
+                    <div class="pending-fiscal-message @(pendingFiscalMessageIsError ? "error" : "")" role="status">@pendingFiscalMessage</div>
+                }
+                <div style="padding:8px 18px"><button class="pending-fiscal-archive-link" type="button" @onclick="ToggleFiscalArchive">@(showArchivedFiscal ? "← Εκκρεμείς διαβιβάσεις" : $"Αρχείο καθαρισμού ({archivedFiscalRows.Count})")</button></div>
+                <div class="pending-fiscal-list">
+                    @if ((showArchivedFiscal ? archivedFiscalRows.Count : pendingFiscalRows.Count) == 0)
+                    {
+                        <div class="pending-fiscal-message">@(showArchivedFiscal ? "Το αρχείο καθαρισμού είναι κενό." : "Δεν υπάρχουν εκκρεμή παραστατικά.")</div>
+                    }
+                    @foreach (var pendingRow in (showArchivedFiscal ? archivedFiscalRows : pendingFiscalRows))
+                    {
+                        <article class="pending-fiscal-row" @key="((pendingRow.OrderId, pendingRow.FiscalOrderDocumentId, pendingRow.BatchId))">
+                            <div>
+                                <strong>@pendingRow.Document · @pendingRow.Table · €@pendingRow.Amount.ToString("0.00")</strong>
+                                <small>Κατάσταση: @GetPendingFiscalStateLabel(pendingRow.State, pendingRow.TransmissionFailure, pendingRow.FiscalOrderDocumentId.HasValue) · @pendingRow.AttemptedAtUtc?.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</small>
+                                @if (pendingRow.TransmissionFailure is 1 or 2)
+                                {
+                                    <small>Εκτύπωση: @(pendingRow.OfflineReceiptPrintedAtUtc.HasValue ? $"επιβεβαιώθηκε στις {pendingRow.OfflineReceiptPrintedAtUtc.Value.ToLocalTime():dd/MM/yyyy HH:mm}" : "δεν έχει επιβεβαιωθεί ακόμη")</small>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(pendingRow.ErrorMessage))
+                                {
+                                    <small>@pendingRow.ErrorMessage</small>
+                                }
+                            </div>
+                            <div class="pending-fiscal-actions">
+                                @if (showArchivedFiscal)
+                                {
+                                    <button type="button" disabled="@pendingFiscalBusy" @onclick="() => RestoreFiscalAsync(pendingRow)">Επαναφορά</button>
+                                    <button class="pending-fiscal-clean" type="button" disabled="@pendingFiscalBusy" @onclick="() => DeleteArchivedFiscalAsync(pendingRow)">Οριστική διαγραφή</button>
+                                }
+                                else
+                                {
+                                @if ((pendingRow.TransmissionFailure is 1 or 2 || pendingRow.State == "OfflineIssued") && !pendingRow.OfflineReceiptPrintedAtUtc.HasValue)
+                                {
+                                    <button class="pending-fiscal-print" type="button" disabled="@(pendingFiscalBusy || retryingFiscalOrderId.HasValue || printingFiscalOrderId.HasValue)" @onclick="() => PrintPendingOfflineFiscalAsync(pendingRow)">
+                                        @(printingFiscalOrderId == pendingRow.OrderId ? "Εκτύπωση…" : pendingRow.FiscalOrderDocumentId.HasValue ? "Εκτύπωση δελτίου" : "Εκτύπωση απόδειξης")
+                                    </button>
+                                }
+                                <button type="button" disabled="@(pendingFiscalBusy || retryingFiscalOrderId.HasValue || printingFiscalOrderId.HasValue)" @onclick="() => RetryPendingFiscalAsync(pendingRow)">
+                                    @(retryingFiscalOrderId == pendingRow.OrderId ? "Έλεγχος…" : "Έλεγχος / διαβίβαση")
+                                </button>
+                                @if (pendingRow.State == "NeedsReview" && !pendingRow.BatchId.HasValue && !pendingRow.FiscalOrderDocumentId.HasValue)
+                                {
+                                    <button type="button" disabled="@(pendingFiscalBusy || retryingFiscalOrderId.HasValue || printingFiscalOrderId.HasValue)" @onclick="() => InspectCollisionAsync(pendingRow)">Σύγκριση απόδειξης</button>
+                                }
+                                @if ((pendingRow.State is "NeedsReview" or "AwaitingOriginal") && !pendingRow.BatchId.HasValue)
+                                {
+                                    <button class="pending-fiscal-clean" type="button" disabled="@(pendingFiscalBusy || retryingFiscalOrderId.HasValue || printingFiscalOrderId.HasValue)" @onclick="() => CleanFiscalAsync(pendingRow)">Καθαρισμός</button>
+                                }
+                                }
+                            </div>
+                        </article>
+                    }
+                </div>
+                <footer class="pending-fiscal-footer">
+                    <span>Η επανάληψη χρησιμοποιεί το ίδιο αναγνωριστικό παραστατικού για αποφυγή διπλής έκδοσης.</span>
+                    @if (!showArchivedFiscal && pendingFiscalRows.Any(r => r.State == "NeedsReview" && !r.BatchId.HasValue))
+                    {
+                        <button class="pending-fiscal-batch pending-fiscal-clean" type="button" disabled="@(pendingFiscalBusy || retryingFiscalOrderId.HasValue || printingFiscalOrderId.HasValue)" @onclick="CleanAllFiscalAsync">Καθαρισμός προβληματικών</button>
+                    }
+                    @if (!showArchivedFiscal)
+                    {
+                    <button class="pending-fiscal-batch" type="button" disabled="@(pendingFiscalBusy || printingFiscalOrderId.HasValue || pendingFiscalRows.Count == 0)" @onclick="RetryAllPendingFiscalAsync">
+                        @(pendingFiscalBusy ? "Έλεγχος παραστατικών…" : "Έλεγχος όλων")
+                    </button>
+                    }
+                </footer>
+            </section>
+        </div>
+    }
+
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "sent")]
+    public bool SentNotice { get; set; }
+
+    [SupplyParameterFromQuery(Name = "kitchenPrintError")]
+    public bool KitchenPrintErrorNotice { get; set; }
+
+    [SupplyParameterFromQuery(Name = "fiscalOffline")]
+    public int? FiscalOffline { get; set; }
+
+    [SupplyParameterFromQuery(Name = "fiscalError")]
+    public bool FiscalErrorNotice { get; set; }
+
+    [SupplyParameterFromQuery(Name = "fiscalPrintError")]
+    public bool FiscalPrintErrorNotice { get; set; }
+
+    [SupplyParameterFromQuery(Name = "inventoryError")]
+    public bool InventoryErrorNotice { get; set; }
+
+    [SupplyParameterFromQuery(Name = "transferFrom")]
+    public int? TransferFromTableId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "transferOrder")]
+    public int? TransferOrderId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "startTakeAway")]
+    public bool StartTakeAwayQuery { get; set; }
+
+    private bool TakeAwayOnlyEdition => Configuration.GetValue<bool>("Edition:TakeAwayOnly");
+    private bool ShouldStartTakeAway => TakeAwayOnlyEdition || StartTakeAwayQuery;
+
+    private bool showBackgroundMenu;
+    private bool appearanceEditMode;
+    private double menuX = 20;
+    private double menuY = 20;
+    private string pageBackground = "#f4f6f9";
+    private string? venueImage;
+    private bool showOccupiedTimer;
+    private Dictionary<int, DateTime> occupiedSince = new();
+    private string GetOccupiedDuration(int tableId)
+    {
+        if (!occupiedSince.TryGetValue(tableId, out var since)) return "";
+        var elapsed = DateTime.Now - since;
+        return elapsed.TotalMinutes < 1 ? "μόλις τώρα" : elapsed.TotalHours < 1 ? $"{(int)elapsed.TotalMinutes} λ." : $"{(int)elapsed.TotalHours} ώ. {elapsed.Minutes} λ.";
+    }
+    private string editingBackground = "#f4f6f9";
+    private bool showTableStyleEditor;
+    private bool applyTableStyleToAll;
+    private int? editingTableStyleId;
+    private string editingTableBackground = "#ffffff";
+    private string editingTableText = "#1f2a44";
+    private string editingTableBorder = "#d8dde6";
+    private int editingTableFontSize = 16;
+    private bool editingTableBold = true;
+
+    private string GetTableTileStyle(RestaurantTable t) =>
+        $"background-color:{t.TileBackgroundColor};color:{t.TileTextColor};border-color:{t.TileBorderColor};font-size:{Math.Clamp((int)Math.Round(Math.Clamp(t.TileFontSize, 10, 40) * deviceScale / 100.0), 9, 60)}px;font-weight:{(t.TileBold ? 800 : 600)};";
+
+    // Μέγεθος πλακιδίων: κατάστημα → περιοχή (αν οριστεί) → κλίμακα συσκευής (localStorage).
+    private int storeTileWidth = 140;
+    private int storeTileHeight = 110;
+    private int storeTileRows = 3;
+    private int deviceScale = 100;
+    private const string DeviceScaleKey = "restaurant.tables.tileScale";
+
+    private (int Width, int Height, int Rows) GetTileSize(int? areaId)
+    {
+        var area = areaId is null ? null : areas.FirstOrDefault(a => a.Id == areaId);
+        var width = TableTileLimits.Width(area?.TileWidth ?? storeTileWidth);
+        var height = TableTileLimits.Height(area?.TileHeight ?? storeTileHeight);
+        var rows = TableTileLimits.Rows(area?.Rows ?? storeTileRows);
+        return ((int)Math.Round(width * deviceScale / 100.0), (int)Math.Round(height * deviceScale / 100.0), rows);
+    }
+
+    // Σταθερές σειρές, ίδιο μέγεθος σε κάθε καρτέλα· οι επιπλέον στήλες κυλούν οριζόντια.
+    private string GetStripStyle(int? areaId, int count)
+    {
+        var (w, h, rows) = GetTileSize(areaId);
+        count = Math.Max(1, count);
+        var columns = Math.Max(1, (int)Math.Ceiling(count / (double)Math.Max(1, rows)));
+        rows = Math.Max(1, (int)Math.Ceiling(count / (double)columns)); // no empty rows for small areas
+        return $"--tile-w:{w}px;--tile-h:{h}px;grid-template-columns:repeat({columns},{w}px);grid-template-rows:repeat({rows},{h}px);";
+    }
+
+    private string GetFloorTileSizeStyle(RestaurantTable t)
+    {
+        var (w, h, _) = GetTileSize(t.TableAreaId);
+        return $"width:{w}px;height:{h}px;";
+    }
+
+    private async Task ChangeDeviceScaleAsync(int delta)
+    {
+        deviceScale = TableTileLimits.Scale(deviceScale + delta);
+        await JS.InvokeVoidAsync("localStorage.setItem", DeviceScaleKey, deviceScale.ToString());
+    }
+
+    private void OpenTableStyle(RestaurantTable table)
+    {
+        if (!appearanceEditMode) return;
+        applyTableStyleToAll = false;
+        editingTableStyleId = table.Id;
+        editingTableBackground = table.TileBackgroundColor;
+        editingTableText = table.TileTextColor;
+        editingTableBorder = table.TileBorderColor;
+        editingTableFontSize = table.TileFontSize;
+        editingTableBold = table.TileBold;
+        showTableStyleEditor = true;
+    }
+
+    private void OpenBulkTableStyle()
+    {
+        if (!appearanceEditMode) return;
+        var first = tables.FirstOrDefault();
+        applyTableStyleToAll = true;
+        editingTableStyleId = null;
+        editingTableBackground = first?.TileBackgroundColor ?? "#ffffff";
+        editingTableText = first?.TileTextColor ?? "#1f2a44";
+        editingTableBorder = first?.TileBorderColor ?? "#d8dde6";
+        editingTableFontSize = first?.TileFontSize ?? 16;
+        editingTableBold = first?.TileBold ?? true;
+        showTableStyleEditor = true;
+    }
+
+    private void CloseTableStyleEditor() => showTableStyleEditor = false;
+
+    private async Task SaveTableStyleAsync()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var targets = applyTableStyleToAll
+            ? await db.Tables.ToListAsync()
+            : await db.Tables.Where(t => t.Id == editingTableStyleId).ToListAsync();
+        foreach (var t in targets)
+        {
+            t.TileBackgroundColor = editingTableBackground;
+            t.TileTextColor = editingTableText;
+            t.TileBorderColor = editingTableBorder;
+            t.TileFontSize = Math.Clamp(editingTableFontSize, 10, 40);
+            t.TileBold = editingTableBold;
+            var local = tables.FirstOrDefault(x => x.Id == t.Id);
+            if (local is not null)
+            {
+                local.TileBackgroundColor = t.TileBackgroundColor;
+                local.TileTextColor = t.TileTextColor;
+                local.TileBorderColor = t.TileBorderColor;
+                local.TileFontSize = t.TileFontSize;
+                local.TileBold = t.TileBold;
+            }
+        }
+        await db.SaveChangesAsync();
+        showTableStyleEditor = false;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            if (!TakeAwayOnlyEdition)
+            {
+                var savedScale = await JS.InvokeAsync<string?>("localStorage.getItem", DeviceScaleKey);
+                if (int.TryParse(savedScale, out var scale) && TableTileLimits.Scale(scale) != deviceScale)
+                {
+                    deviceScale = TableTileLimits.Scale(scale);
+                    await InvokeAsync(StateHasChanged);
+                }
+                var saved = await JS.InvokeAsync<string?>("localStorage.getItem", "restaurant.tables.background");
+                if (!string.IsNullOrWhiteSpace(saved))
+                {
+                    pageBackground = saved;
+                    editingBackground = saved;
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+
+            // Start after the interactive circuit is attached. Navigating during
+            // prerender could be swallowed as a prerender redirect and create a
+            // second empty basket when the circuit starts.
+            if (ShouldStartTakeAway && !transferMode)
+                await StartTakeAwayAsync();
+        }
+    }
+
+    private void OpenBackgroundMenu(MouseEventArgs e)
+    {
+        if (!appearanceEditMode) return;
+        menuX = Math.Min(e.ClientX, Math.Max(10, 300));
+        menuY = Math.Min(e.ClientY, Math.Max(10, 500));
+        editingBackground = pageBackground;
+        showBackgroundMenu = true;
+    }
+
+    private void ToggleAppearanceMode() => appearanceEditMode = !appearanceEditMode;
+
+    private async Task SaveBackground()
+    {
+        pageBackground = editingBackground;
+        showBackgroundMenu = false;
+        await JS.InvokeVoidAsync("localStorage.setItem", "restaurant.tables.background", pageBackground);
+    }
+
+    private async Task ResetBackground()
+    {
+        pageBackground = "#f4f6f9";
+        editingBackground = pageBackground;
+        showBackgroundMenu = false;
+        await JS.InvokeVoidAsync("localStorage.removeItem", "restaurant.tables.background");
+    }
+
+    private List<RestaurantTable> tables = new();
+    private List<TableArea> areas = new();
+    private Dictionary<int, decimal> totalsByTable = new();
+    private HashSet<int> occupiedTableIds = new();
+    private HashSet<int> pendingTransferTables = new();
+    private bool transferMode;
+    private bool transferBusy;
+    private bool showTransferConfirmation;
+    private RestaurantTable? transferDestination;
+    private string transferSourceName = string.Empty;
+    private string? transferPageMessage;
+    private bool takeAwayStartBusy;
+    private List<PendingFiscalTransmission> pendingFiscalRows = new();
+    private List<PendingFiscalTransmission> archivedFiscalRows = new();
+    private bool showArchivedFiscal;
+    private bool showPendingFiscalModal;
+    private bool pendingFiscalBusy;
+    private int? retryingFiscalOrderId;
+    private int? printingFiscalOrderId;
+    private string? pendingFiscalMessage;
+    private bool pendingFiscalMessageIsError;
+
+    private int selectedAreaId = 0;
+
+    private IEnumerable<RestaurantTable> FilteredTables =>
+        selectedAreaId == 0
+            ? tables
+            : tables.Where(t => t.TableAreaId == selectedAreaId);
+
+    private IEnumerable<RestaurantTable> PositionedTables =>
+        FilteredTables.Where(t => t.PosX is not null && t.PosY is not null);
+
+    private IEnumerable<RestaurantTable> UnpositionedTables =>
+        FilteredTables.Where(t => t.PosX is null || t.PosY is null);
+
+    protected override async Task OnInitializedAsync()
+    {
+        // The Take Away-only edition has no table view or transfer workflow.
+        // Its interactive first render opens a fresh takeaway basket.
+        if (TakeAwayOnlyEdition) return;
+
+        using var db = await DbFactory.CreateDbContextAsync();
+        var appearance = await db.RestaurantAppearances.AsNoTracking().FirstOrDefaultAsync(x => x.Id == 1);
+        venueImage = appearance?.BackgroundImageDataUri;
+        showOccupiedTimer = appearance?.ShowOccupiedTableTimer ?? false;
+        storeTileWidth = TableTileLimits.Width(appearance?.TableTileWidth ?? 140);
+        storeTileHeight = TableTileLimits.Height(appearance?.TableTileHeight ?? 110);
+        storeTileRows = TableTileLimits.Rows(appearance?.TableRows ?? 3);
+
+        var pending = await db.TableTransfers.Where(t => t.Stage != TableTransferStage.Completed && t.Stage != TableTransferStage.Rejected)
+            .Select(t => new { t.SourceTableId, t.TargetTableId }).ToListAsync();
+        pendingTransferTables = pending.SelectMany(t => new[] { t.SourceTableId, t.TargetTableId }).ToHashSet();
+
+        tables = await db.Tables
+            .Where(t => t.IsActive)
+            .OrderBy(t => t.SortOrder)
+            .ThenBy(t => t.Name)
+            .ToListAsync();
+
+        areas = await db.TableAreas
+            .OrderBy(a => a.Name)
+            .ToListAsync();
+
+        if (TransferFromTableId is > 0 && TransferOrderId is > 0)
+        {
+            var source = await db.Tables.AsNoTracking().FirstOrDefaultAsync(t => t.Id == TransferFromTableId && t.IsActive);
+            var sourceOrderIsOpen = await db.Orders.AnyAsync(o => o.Id == TransferOrderId && o.RestaurantTableId == TransferFromTableId && o.Status == OrderStatus.Open);
+            if (source is not null && sourceOrderIsOpen && !pendingTransferTables.Contains(source.Id))
+            {
+                transferMode = true;
+                transferSourceName = source.Name;
+                selectedAreaId = 0;
+            }
+            else
+            {
+                transferPageMessage = "Η αρχική παραγγελία δεν είναι πλέον διαθέσιμη για μεταφορά. Άνοιξε ξανά το τραπέζι και δοκίμασε πάλι.";
+            }
+        }
+
+        var openOrders = await db.Orders
+            .Where(o => o.Status == OrderStatus.Open)
+            .Include(o => o.Items)
+                .ThenInclude(i => i.MenuItem)
+            .ToListAsync();
+
+        // A table tile shows the unpaid balance, not the original ordered total.
+        // Only successfully issued payments reduce the remaining item quantities.
+        var openOrderIds = openOrders.Select(o => o.Id).ToList();
+        occupiedTableIds = openOrders
+            .Where(o => o.Items.Any(i => !i.IsCancelled && i.Quantity > 0))
+            .Select(o => o.RestaurantTableId)
+            .ToHashSet();
+        occupiedSince = openOrders.Where(o => occupiedTableIds.Contains(o.RestaurantTableId))
+            .GroupBy(o => o.RestaurantTableId).ToDictionary(g => g.Key, g => g.Min(o => o.CreatedAt));
+        var paidQuantitiesByItem = await db.OrderPaymentItems
+            .Where(pi => pi.OrderPayment != null
+                && openOrderIds.Contains(pi.OrderPayment.OrderId)
+                && pi.OrderPayment.FiscalStatus == FiscalStatus.Issued)
+            .GroupBy(pi => pi.OrderItemId)
+            .Select(g => new { OrderItemId = g.Key, Quantity = g.Sum(x => x.Quantity) })
+            .ToDictionaryAsync(x => x.OrderItemId, x => x.Quantity);
+
+        totalsByTable = openOrders
+            .GroupBy(o => o.RestaurantTableId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.SelectMany(o => o.Items)
+                    .Where(i => !i.IsCancelled)
+                    .Sum(i => Math.Max(0, i.Quantity - paidQuantitiesByItem.GetValueOrDefault(i.Id, 0))
+                        * ((i.MenuItem?.Price ?? 0) + i.ExtrasPrice))
+            );
+
+        pendingFiscalRows = (await FiscalDocuments.GetPendingTransmissionsAsync(db)).ToList();
+        archivedFiscalRows = await FiscalOutboxArchive.ListArchivedAsync(db);
+    }
+
+    private async Task OpenPendingFiscalModal()
+    {
+        pendingFiscalMessage = null;
+        pendingFiscalMessageIsError = false;
+        showArchivedFiscal = false;
+        await RefreshPendingFiscalRowsAsync();
+        showPendingFiscalModal = true;
+    }
+
+    private void ClosePendingFiscalModal()
+    {
+        if (pendingFiscalBusy || retryingFiscalOrderId.HasValue || printingFiscalOrderId.HasValue) return;
+        showPendingFiscalModal = false;
+    }
+
+    private static string GetPendingFiscalStateLabel(string state, int? transmissionFailure, bool isOrderForm) => state switch
+    {
+        "AwaitingOriginal" => "Αναμένεται ΜΑΡΚ αρχικού δελτίου",
+        "AwaitingIssue" => "Καταχωρημένη παραγγελία · εκκρεμεί η έκδοση δελτίου",
+        "OfflineIssued" => $"{(isOrderForm ? "Δελτίο παραγγελίας" : "Απόδειξη")} εκδόθηκε — Transmission Failure_{transmissionFailure ?? 1}, εκκρεμεί διαβίβαση",
+        "NeedsReview" => "Απαιτείται έλεγχος παρόχου",
+        "Sending" => "Αποστολή σε εξέλιξη",
+        _ => "Εκκρεμεί διαβίβαση"
+    };
+
+    private async Task InspectCollisionAsync(PendingFiscalTransmission row)
+    {
+        if (pendingFiscalBusy || retryingFiscalOrderId.HasValue || printingFiscalOrderId.HasValue) return;
+        pendingFiscalBusy = true; pendingFiscalMessage = null; pendingFiscalMessageIsError = false;
+        try
+        {
+            using var db = await DbFactory.CreateDbContextAsync();
+            pendingFiscalMessage = await CollisionInspector.InspectAsync(db, row.OrderId);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex);
+            pendingFiscalMessageIsError = true;
+            pendingFiscalMessage = "Δεν ολοκληρώθηκε η σύγκριση. Δοκίμασε ξανά.";
+        }
+        finally { pendingFiscalBusy = false; }
+    }
+
+    private async Task RetryPendingFiscalAsync(PendingFiscalTransmission pendingRow)
+    {
+        if (pendingFiscalBusy || retryingFiscalOrderId.HasValue || printingFiscalOrderId.HasValue) return;
+        retryingFiscalOrderId = pendingRow.OrderId;
+        pendingFiscalMessage = null;
+        pendingFiscalMessageIsError = false;
+        try
+        {
+            using var db = await DbFactory.CreateDbContextAsync();
+            var result = await FiscalOutbox.CheckAsync(db, pendingRow);
+            pendingFiscalMessageIsError = !result.Success;
+            pendingFiscalMessage = result.Mark > 0
+                ? $"Ταυτοποιήθηκε το παραστατικό (ΜΑΡΚ {result.Mark}). Δεν χρειάζεται νέα έκδοση."
+                : result.ErrorMessage ?? (result.RequiresRecovery ? "Εκκρεμεί επιβεβαίωση από τον πάροχο." : "Ο έλεγχος ολοκληρώθηκε.");
+            pendingFiscalRows = (await FiscalDocuments.GetPendingTransmissionsAsync(db)).ToList();
+        }
+        catch (Exception ex)
+        {
+            pendingFiscalMessageIsError = true;
+            pendingFiscalMessage = $"Δεν ολοκληρώθηκε ο έλεγχος: {ex.Message}";
+            await RefreshPendingFiscalRowsAsync();
+        }
+        finally { retryingFiscalOrderId = null; }
+    }
+
+    private async Task PrintPendingOfflineFiscalAsync(PendingFiscalTransmission row)
+    {
+        var orderId = row.OrderId;
+        if (pendingFiscalBusy || retryingFiscalOrderId.HasValue || printingFiscalOrderId.HasValue) return;
+        printingFiscalOrderId = orderId;
+        pendingFiscalMessage = null;
+        pendingFiscalMessageIsError = false;
+        try
+        {
+            using var db = await DbFactory.CreateDbContextAsync();
+            var result = row.FiscalOrderDocumentId is int id ? await FiscalOutbox.PrintExistingAsync(db, id) : await FiscalDocuments.PrintPendingOfflineReceiptAsync(db, orderId);
+            pendingFiscalMessageIsError = !result.Success;
+            pendingFiscalMessage = result.Success
+                ? result.WasAlreadyPrinted
+                    ? "Η εκτύπωση είχε ήδη επιβεβαιωθεί. Δεν στάλθηκε δεύτερο πρωτότυπο."
+                    : "Το παραστατικό στάλθηκε στον τοπικό εκτυπωτή. Η διαβίβαση παραμένει ξεχωριστή."
+                : $"Η εκτύπωση δεν ολοκληρώθηκε: {result.ErrorMessage ?? "άγνωστο σφάλμα"}";
+            await RefreshPendingFiscalRowsAsync();
+        }
+        catch (Exception ex)
+        {
+            pendingFiscalMessageIsError = true;
+            Console.Error.WriteLine(ex);
+            pendingFiscalMessage = "Δεν επιβεβαιώθηκε η εκτύπωση. Έλεγξε τον εκτυπωτή.";
+            await RefreshPendingFiscalRowsAsync();
+        }
+        finally { printingFiscalOrderId = null; }
+    }
+
+    private async Task RetryAllPendingFiscalAsync()
+    {
+        if (pendingFiscalBusy || printingFiscalOrderId.HasValue || pendingFiscalRows.Count == 0) return;
+        pendingFiscalBusy = true;
+        var attempted = pendingFiscalRows.ToList();
+        var succeeded = 0;
+        try
+        {
+            foreach (var pendingRow in attempted)
+            {
+                using var db = await DbFactory.CreateDbContextAsync();
+                var result = await FiscalOutbox.CheckAsync(db, pendingRow);
+                if (result.Mark > 0) succeeded++;
+            }
+            await RefreshPendingFiscalRowsAsync();
+            pendingFiscalMessageIsError = pendingFiscalRows.Count > 0;
+            pendingFiscalMessage = pendingFiscalRows.Count == 0
+                ? $"Δεν υπάρχουν εκκρεμότητες. Επιβεβαιώθηκαν {succeeded} παραστατικά."
+                : $"Επιβεβαιώθηκαν {succeeded} παραστατικά. Παραμένουν {pendingFiscalRows.Count} για έλεγχο.";
+        }
+        catch (Exception ex)
+        {
+            pendingFiscalMessageIsError = true;
+            pendingFiscalMessage = $"Η διαδικασία σταμάτησε με σφάλμα: {ex.Message}";
+            await RefreshPendingFiscalRowsAsync();
+        }
+        finally { pendingFiscalBusy = false; }
+    }
+
+    private async Task RefreshPendingFiscalRowsAsync()
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        pendingFiscalRows = (await FiscalDocuments.GetPendingTransmissionsAsync(db)).ToList();
+        archivedFiscalRows = await FiscalOutboxArchive.ListArchivedAsync(db);
+    }
+
+    private void ToggleFiscalArchive() { showArchivedFiscal = !showArchivedFiscal; pendingFiscalMessage = null; }
+
+    private Task CleanFiscalAsync(PendingFiscalTransmission row) => CleanFiscalRowsAsync(new[] { row });
+    private Task CleanAllFiscalAsync() => CleanFiscalRowsAsync(pendingFiscalRows.Where(r => r.State == "NeedsReview" && !r.BatchId.HasValue).ToArray());
+
+    private async Task CleanFiscalRowsAsync(IReadOnlyCollection<PendingFiscalTransmission> rows)
+    {
+        if (pendingFiscalBusy || retryingFiscalOrderId.HasValue || printingFiscalOrderId.HasValue || rows.Count == 0) return;
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"Καθαρισμός {rows.Count} παραστατικών από τη λίστα; Δεν έχουν επιβεβαιωθεί ως διαβιβασμένα και δεν θα αποσταλούν αυτόματα. Θα διατηρηθούν στο Αρχείο καθαρισμού μέχρι να επιλέξεις οριστική διαγραφή.");
+        if (!confirmed) return;
+        pendingFiscalBusy = true;
+        try
+        {
+            using var db = await DbFactory.CreateDbContextAsync();
+            var count = 0;
+            foreach (var row in rows)
+                count += await FiscalOutboxArchive.SetArchivedAsync(db, row.OrderId, row.FiscalOrderDocumentId, true);
+            await RefreshPendingFiscalRowsAsync();
+            pendingFiscalMessageIsError = count != rows.Count;
+            pendingFiscalMessage = $"Αφαιρέθηκαν {count} παραστατικά από τη λίστα. Παραμένουν στο Αρχείο καθαρισμού και δεν έχουν διαβιβαστεί με αυτή την ενέργεια.";
+        }
+        catch (Exception ex) { pendingFiscalMessageIsError = true; pendingFiscalMessage = $"Ο καθαρισμός δεν ολοκληρώθηκε: {ex.Message}"; await RefreshPendingFiscalRowsAsync(); }
+        finally { pendingFiscalBusy = false; }
+    }
+
+    private async Task RestoreFiscalAsync(PendingFiscalTransmission row)
+    {
+        if (pendingFiscalBusy) return;
+        pendingFiscalBusy = true;
+        try
+        {
+            using var db = await DbFactory.CreateDbContextAsync();
+            var count = await FiscalOutboxArchive.SetArchivedAsync(db, row.OrderId, row.FiscalOrderDocumentId, false);
+            await RefreshPendingFiscalRowsAsync();
+            pendingFiscalMessageIsError = count == 0;
+            pendingFiscalMessage = count > 0 ? "Το παραστατικό επανήλθε στις εκκρεμείς διαβιβάσεις." : "Η κατάσταση άλλαξε. Ανανέωσε τη λίστα.";
+        }
+        catch (Exception ex) { pendingFiscalMessageIsError = true; pendingFiscalMessage = $"Η επαναφορά απέτυχε: {ex.Message}"; }
+        finally { pendingFiscalBusy = false; }
+    }
+
+    private async Task DeleteArchivedFiscalAsync(PendingFiscalTransmission row)
+    {
+        if (pendingFiscalBusy) return;
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"Να διαγραφεί οριστικά το {row.Document}; Θα αφαιρεθεί το μη διαβιβασμένο φορολογικό αίτημα από το αρχείο και δεν θα μπορεί να επανέλθει.");
+        if (!confirmed) return;
+        pendingFiscalBusy = true;
+        try
+        {
+            using var db = await DbFactory.CreateDbContextAsync();
+            var deleted = await FiscalOutboxArchive.DeleteArchivedAsync(db, row.OrderId, row.FiscalOrderDocumentId);
+            await RefreshPendingFiscalRowsAsync();
+            pendingFiscalMessageIsError = !deleted;
+            pendingFiscalMessage = deleted ? "Το μη διαβιβασμένο αίτημα διαγράφηκε οριστικά από το αρχείο." : "Δεν βρέθηκε πλέον το αίτημα προς διαγραφή.";
+        }
+        catch (Exception ex) { pendingFiscalMessageIsError = true; pendingFiscalMessage = $"Η οριστική διαγραφή απέτυχε: {ex.Message}"; }
+        finally { pendingFiscalBusy = false; }
+    }
+
+    private void GoToTable(int id)
+    {
+        if (transferMode)
+        {
+            if (id == TransferFromTableId)
+            {
+                transferPageMessage = "Επίλεξε διαφορετικό τραπέζι προορισμού.";
+                return;
+            }
+            if (pendingTransferTables.Contains(id))
+            {
+                transferPageMessage = "Το τραπέζι συμμετέχει ήδη σε εκκρεμή μεταφορά και δεν είναι διαθέσιμο.";
+                return;
+            }
+            transferPageMessage = null;
+            transferDestination = tables.FirstOrDefault(t => t.Id == id);
+            showTransferConfirmation = transferDestination is not null;
+            return;
+        }
+        Nav.NavigateTo($"/waiter/table/{id}");
+    }
+
+    private async Task StartTakeAwayAsync()
+    {
+        if (takeAwayStartBusy) return;
+        takeAwayStartBusy = true;
+        try
+        {
+            var authState = await AuthProvider.GetAuthenticationStateAsync();
+            var userIdValue = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (!int.TryParse(userIdValue, out var userId))
+            {
+                transferPageMessage = "Δεν βρέθηκε ενεργός χρήστης. Συνδέσου ξανά και δοκίμασε.";
+                return;
+            }
+
+            using var db = await DbFactory.CreateDbContextAsync();
+            // Clean up empty Take Away sessions abandoned before any items were added.
+            var emptyOrders = await db.Orders
+                .Where(o => o.Status == OrderStatus.Open && o.RestaurantTable != null && o.RestaurantTable.IsTakeAway)
+                .Include(o => o.Items)
+                .Include(o => o.Payments)
+                .ToListAsync();
+            var emptyOrderTableIds = emptyOrders
+                .Where(o => o.Items.Count == 0 && o.Payments.Count == 0)
+                .Select(o => o.RestaurantTableId)
+                .Distinct()
+                .ToList();
+            foreach (var empty in emptyOrders.Where(o => o.Items.Count == 0 && o.Payments.Count == 0))
+                db.Orders.Remove(empty);
+            if (emptyOrders.Any(o => o.Items.Count == 0 && o.Payments.Count == 0))
+                await db.SaveChangesAsync();
+            foreach (var oldTableId in emptyOrderTableIds)
+            {
+                if (!await db.Orders.AnyAsync(o => o.RestaurantTableId == oldTableId))
+                {
+                    var oldTable = await db.Tables.FindAsync(oldTableId);
+                    if (oldTable is { IsTakeAway: true }) db.Tables.Remove(oldTable);
+                }
+            }
+            if (emptyOrderTableIds.Count > 0) await db.SaveChangesAsync();
+
+            // Each basket gets its own hidden point of sale, so simultaneous Take Away
+            // orders never share a table lock or collide with table-scoped queries.
+            var takeAwayTable = new RestaurantTable
+            {
+                Name = "Take Away",
+                IsActive = false,
+                IsTakeAway = true,
+                SortOrder = int.MaxValue
+            };
+            db.Tables.Add(takeAwayTable);
+            await db.SaveChangesAsync();
+            var order = new Order { RestaurantTableId = takeAwayTable.Id, WaiterUserId = userId, Status = OrderStatus.Open };
+            db.Orders.Add(order);
+            await db.SaveChangesAsync();
+            Nav.NavigateTo($"/waiter/table/{takeAwayTable.Id}?takeaway=true&takeawayOrderId={order.Id}", forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            transferPageMessage = $"Δεν άνοιξε η παραγγελία Take Away: {ex.Message}";
+        }
+        finally
+        {
+            takeAwayStartBusy = false;
+        }
+    }
+
+    private void CancelTransferMode() => Nav.NavigateTo($"/waiter/table/{TransferFromTableId}");
+
+    private void CancelDestinationConfirmation()
+    {
+        if (transferBusy) return;
+        showTransferConfirmation = false;
+        transferDestination = null;
+        transferPageMessage = null;
+    }
+
+    private async Task ConfirmFloorplanTransferAsync()
+    {
+        if (transferBusy || transferDestination is null || TransferOrderId is not > 0) return;
+        transferBusy = true;
+        transferPageMessage = null;
+        try
+        {
+            var authState = await AuthProvider.GetAuthenticationStateAsync();
+            var userIdValue = authState.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (!int.TryParse(userIdValue, out var userId))
+            {
+                transferPageMessage = "Δεν βρέθηκε ενεργός χρήστης. Συνδέσου ξανά και δοκίμασε.";
+                return;
+            }
+
+            var result = await Transfers.MoveAllAsync(TransferOrderId.Value, transferDestination.Id, userId);
+            if (result.Success)
+            {
+                Nav.NavigateTo($"/waiter/table/{result.TargetTableId}", forceLoad: true);
+                return;
+            }
+
+            if (result.Pending)
+            {
+                Nav.NavigateTo($"/waiter/table/{TransferFromTableId}", forceLoad: true);
+                return;
+            }
+
+            transferPageMessage = result.Message;
+        }
+        catch (Exception)
+        {
+            transferPageMessage = "Η μεταφορά δεν επιβεβαιώθηκε λόγω σφάλματος. Έλεγξε το αρχικό τραπέζι πριν δοκιμάσεις ξανά.";
+        }
+        finally { transferBusy = false; }
+    }
+}
