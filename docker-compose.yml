@@ -68,7 +68,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "${CLOUD_API_BIND_ADDRESS:-0.0.0.0}:${CLOUD_API_PORT:-18081}:8080"
+      - "18081:8080"
     networks:
       - database
 

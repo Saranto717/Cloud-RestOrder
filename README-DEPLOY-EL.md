@@ -24,8 +24,6 @@
 | `LICENSE_MANAGER_PASSWORD_SECRET` | Ισχυρός, μοναδικός κωδικός διαχειριστή, τουλάχιστον 32 χαρακτήρες. |
 | `POSTGRES_ADMIN_PASSWORD_SECRET` | Διαφορετικός τυχαίος κωδικός για τον διαχειριστή PostgreSQL. |
 | `CLOUD_APP_PASSWORD_SECRET` | Διαφορετικός τυχαίος κωδικός για τον χρήστη εφαρμογής PostgreSQL. |
-| `CLOUD_API_BIND_ADDRESS` | `0.0.0.0` για τη δοκιμή από το τοπικό δίκτυο και το OpenResty. |
-| `CLOUD_API_PORT` | `18081` ώστε να μην συγκρουστεί με το παλιό `cloud` που χρησιμοποιεί το `18080`. |
 | `CLOUD_TRUSTED_PROXY_ADDRESSES` | Άφησέ το κενό για την αρχική δοκιμή HTTP. Πριν από HTTPS, βάλε την IPv4 διεύθυνση από την οποία το OpenResty συνδέεται στο API. |
 | `POSTGRES_DB` | `restaurant_cloud` |
 | `POSTGRES_ADMIN_USER` | `restaurant_cloud_admin` |
@@ -39,6 +37,8 @@
 - `http://192.168.1.250:18081/health/ready`
 
 Πρέπει να επιστρέψουν `{"status":"live"}` και `{"status":"ready"}`. Το HTTP είναι μόνο για τον αρχικό έλεγχο· login, διαχείριση αδειών, cloud POS και sync απαιτούν HTTPS.
+
+Το νέο API δημοσιεύεται σταθερά στη θύρα `18081` του host, ώστε να μην εξαρτάται από μεταβλητές Environment.
 
 ## 3. Ενεργοποίηση HTTPS μέσω του υπάρχοντος OpenResty
 
