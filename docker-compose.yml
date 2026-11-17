@@ -50,7 +50,7 @@ services:
       Cloud__LicenseManagerEmail: ${LICENSE_MANAGER_EMAIL:?Set LICENSE_MANAGER_EMAIL in Dockhand}
       Cloud__LicenseManagerPasswordFile: /run/secrets/license_manager_password
       Cloud__LicenseSigningPrivateKeyFile: /var/lib/restaurantorders/license-signing-private.pem
-      Cloud__TrustedProxyAddresses: 10.254.250.2
+      Cloud__TrustedProxyAddresses: ${CLOUD_TRUSTED_PROXY_ADDRESSES:-}
     secrets:
       - source: cloud_app_password
         target: cloud_app_password
@@ -68,42 +68,17 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "${CLOUD_API_BIND_ADDRESS:-0.0.0.0}:${CLOUD_API_PORT:-18080}:8080"
+      - "${CLOUD_API_BIND_ADDRESS:-0.0.0.0}:${CLOUD_API_PORT:-18081}:8080"
     networks:
       - database
-      - proxy
-
-  caddy:
-    image: caddy:2-alpine
-    profiles: ["https"]
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    networks:
-      proxy:
-        ipv4_address: 10.254.250.2
-    depends_on:
-      - cloud-api
 
 networks:
   database:
     internal: true
-  proxy:
-    ipam:
-      config:
-        - subnet: 10.254.250.0/24
 
 volumes:
   postgres-data:
   license-signing-data:
-  caddy-data:
-  caddy-config:
 
 secrets:
   postgres_admin_password:

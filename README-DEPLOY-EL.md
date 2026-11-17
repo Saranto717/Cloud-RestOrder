@@ -1,82 +1,66 @@
-# Ανάπτυξη στο Dockhand
+# Ανάπτυξη του νέου stack στο Dockhand
 
-Ο πηγαίος κώδικας βρίσκεται στο δημόσιο repository [Saranto717/Cloud-RestOrder](https://github.com/Saranto717/Cloud-RestOrder). Μην αποθηκεύεις κωδικούς, tokens, ιδιωτικά κλειδιά ή αρχεία πελατών σε αυτό. Το Docker image δημοσιεύεται ξεχωριστά στο GHCR ως `cloud-restorder`.
+Ο κώδικας είναι στο δημόσιο repository [Saranto717/Cloud-RestOrder](https://github.com/Saranto717/Cloud-RestOrder). Αυτό το stack είναι ξεχωριστό από το παλιό `cloud`: έχει δική του βάση PostgreSQL και δικά του volumes. Μην αλλάξεις ή διαγράψεις το παλιό stack κατά τη δοκιμή.
 
-## 1. Δημιουργία stack
+## 1. Δημιουργία stack από Git
 
-Στο Dockhand επίλεξε Stacks → From Git και συμπλήρωσε:
+Στο Dockhand επίλεξε **Stacks → From Git** και συμπλήρωσε:
 
-- Repository: Saranto717/Cloud-RestOrder.
-- Branch: main.
-- Compose file: docker-compose.yml.
-- Schedule sync: ενεργό, κάθε 5 λεπτά.
+- **Stack name:** `cloud-restorder`
+- **Repository:** `https://github.com/Saranto717/Cloud-RestOrder.git`
+- **Branch:** `main`
+- **Compose file:** `docker-compose.yml`
+- **Scheduled sync:** ενεργό, κάθε 5 λεπτά
 
-Το Docker image είναι `ghcr.io/saranto717/cloud-restorder:latest`. Στο πρώτο deploy θα χρειαστεί να έχει ολοκληρωθεί το release v0.2.0 και να είναι δημόσιο το GHCR package. Το Compose τραβά πάντα το πιο πρόσφατο image. Μην προσθέσεις signing key στο Dockhand· δημιουργείται από μόνο του.
+Το νέο stack χρησιμοποιεί το image `ghcr.io/saranto717/cloud-restorder:latest`. Το Compose έχει `pull_policy: always`. Το `postgres-data` και το `license-signing-data` θα δημιουργηθούν με πρόθεμα `cloud-restorder_`, χωριστά από τα volumes του παλιού stack.
 
-## 2. Αρχικές μεταβλητές Dockhand
+## 2. Μεταβλητές περιβάλλοντος
 
-Στις μεταβλητές περιβάλλοντος του stack πρόσθεσε τις παρακάτω τιμές. Βάλε διαφορετικούς, τυχαίους κωδικούς τουλάχιστον 32 χαρακτήρων στα τρία secret πεδία. Μην τους βάλεις στο GitHub ή στο repository.
+Πριν κάνεις deploy, πρόσθεσε στο Environment του νέου stack:
 
 | Όνομα | Τιμή |
 |---|---|
-| LICENSE_MANAGER_EMAIL | Το email διαχειριστή που θα χρησιμοποιείς για σύνδεση. |
-| LICENSE_MANAGER_PASSWORD_SECRET | Ισχυρός κωδικός για το License Manager. |
-| POSTGRES_ADMIN_PASSWORD_SECRET | Διαφορετικός κωδικός για τον διαχειριστή της βάσης. |
-| CLOUD_APP_PASSWORD_SECRET | Διαφορετικός κωδικός για τη σύνδεση του API με τη βάση. |
+| `LICENSE_MANAGER_EMAIL` | Το email με το οποίο θα συνδέεσαι στο License Manager. |
+| `LICENSE_MANAGER_PASSWORD_SECRET` | Ισχυρός, μοναδικός κωδικός διαχειριστή, τουλάχιστον 32 χαρακτήρες. |
+| `POSTGRES_ADMIN_PASSWORD_SECRET` | Διαφορετικός τυχαίος κωδικός για τον διαχειριστή PostgreSQL. |
+| `CLOUD_APP_PASSWORD_SECRET` | Διαφορετικός τυχαίος κωδικός για τον χρήστη εφαρμογής PostgreSQL. |
+| `CLOUD_API_BIND_ADDRESS` | `0.0.0.0` για τη δοκιμή από το τοπικό δίκτυο και το OpenResty. |
+| `CLOUD_API_PORT` | `18081` ώστε να μην συγκρουστεί με το παλιό `cloud` που χρησιμοποιεί το `18080`. |
+| `CLOUD_TRUSTED_PROXY_ADDRESSES` | Άφησέ το κενό για την αρχική δοκιμή HTTP. Πριν από HTTPS, βάλε την IPv4 διεύθυνση από την οποία το OpenResty συνδέεται στο API. |
+| `POSTGRES_DB` | `restaurant_cloud` |
+| `POSTGRES_ADMIN_USER` | `restaurant_cloud_admin` |
+| `CLOUD_APP_USER` | `restaurant_cloud_app` |
 
-Δεν χρειάζονται LICENSE_SIGNING_PRIVATE_KEY_B64, CLOUD_ADMIN_KEY, αρχείο PEM, GitHub token ή SSH στοιχεία. Τα secrets περνούν στο container ως Docker secrets από το περιβάλλον του Dockhand.
+Τα τρία πεδία που τελειώνουν σε `_SECRET` τα περνά το Compose ως Docker secrets. Μη βάλεις κωδικούς, tokens ή ιδιωτικό κλειδί στο GitHub. Δεν χρειάζονται `LICENSE_SIGNING_PRIVATE_KEY_B64`, `CLOUD_ADMIN_KEY` ή PEM: ο server δημιουργεί το κλειδί υπογραφής μόνος του και το κρατά στο volume `cloud-restorder_license-signing-data`.
 
-Για τον πρώτο έλεγχο άφησε:
+Κάνε deploy και δοκίμασε από υπολογιστή στο ίδιο δίκτυο:
 
-- CLOUD_API_BIND_ADDRESS=0.0.0.0
-- CLOUD_API_PORT=18080
-- COMPOSE_PROFILES κενό
+- `http://192.168.1.250:18081/health/live`
+- `http://192.168.1.250:18081/health/ready`
 
-Κάνε deploy και άνοιξε από υπολογιστή στο ίδιο δίκτυο:
+Πρέπει να επιστρέψουν `{"status":"live"}` και `{"status":"ready"}`. Το HTTP είναι μόνο για τον αρχικό έλεγχο· login, διαχείριση αδειών, cloud POS και sync απαιτούν HTTPS.
 
-- http://192.168.1.250:18080/health/live
-- http://192.168.1.250:18080/health/ready
+## 3. Ενεργοποίηση HTTPS μέσω του υπάρχοντος OpenResty
 
-Αναμένονται απαντήσεις {"status":"live"} και {"status":"ready"}. Στο HTTP δοκιμαστικό στάδιο δεν λειτουργούν login, διαχείριση αδειών ή συγχρονισμός· αυτά απαιτούν HTTPS.
+Οι θύρες 80 και 443 χρησιμοποιούνται ήδη από OpenResty, και το παλιό API βρίσκεται στο 18080. **Μην ενεργοποιήσεις δεύτερο Caddy ή proxy στο νέο stack.** Αφού περάσει ο έλεγχος HTTP:
 
-## 3. Ενεργοποίηση HTTPS
+1. Στο Dockhand → Containers → OpenResty container → Network σημείωσε την IPv4 που βλέπει το API ως απομακρυσμένη διεύθυνση. Όρισε αυτή την τιμή στο `CLOUD_TRUSTED_PROXY_ADDRESSES` του νέου stack και κάνε redeploy.
+2. Στο υπάρχον OpenResty reverse proxy άλλαξε το upstream του `texn-support.ddns.net` σε `http://192.168.1.250:18081`.
+3. Κράτησε το ήδη ενεργό TLS certificate και το HTTPS domain. Δοκίμασε `https://texn-support.ddns.net/health/live`, `https://texn-support.ddns.net/license-manager.html` και `https://texn-support.ddns.net/pos.html`.
 
-Στον router προώθησε τις δημόσιες θύρες 80 και 443 στον server Docker. Το DNS του texn-support.ddns.net πρέπει να δείχνει στη δημόσια IP σου και οι θύρες να μην χρησιμοποιούνται από άλλον proxy.
+Μέχρι να αλλάξεις το upstream, το παλιό domain θα συνεχίσει να δείχνει στο παλιό stack. Για επιστροφή αρκεί να επαναφέρεις το upstream στο `18080`. Μην προωθήσεις τη θύρα 18081 από τον router προς το Internet· η δημόσια πρόσβαση πρέπει να περνά από το HTTPS proxy.
 
-Έπειτα στις μεταβλητές του ίδιου stack:
+Στο νέο License Manager συνδέσου με τα στοιχεία που όρισες παραπάνω. Δημιούργησε πελάτη, άδεια και cloud κατάστημα. Το Android tablet ανοίγει το `/pos.html`. Το Windows POS συνδέεται με το HTTPS URL και το Store API token του καταστήματος· κρατά την τοπική SQLite βάση και συνεχίζει να δουλεύει όταν πέσει το Internet.
 
-1. Όρισε COMPOSE_PROFILES=https για να ξεκινήσει το Caddy.
-2. Άλλαξε CLOUD_API_BIND_ADDRESS σε 127.0.0.1 και άφησε CLOUD_API_PORT=18080.
-3. Κάνε Save and deploy.
+## 4. Επόμενες εκδόσεις
 
-Το Caddy ζητά και ανανεώνει αυτόματα πιστοποιητικό TLS για texn-support.ddns.net και προωθεί την κίνηση στο API. Έλεγξε:
+Όλες οι αλλαγές κώδικα γίνονται στο `main`. Κάθε tag έκδοσης όπως `v0.2.1` δημιουργεί Docker image με tag έκδοσης και `latest`, GitHub Release με αυτόματα release notes και commit `.dockhand-release` στο `main`. Το προγραμματισμένο Git sync του Dockhand εντοπίζει το commit και αναπτύσσει το νέο image.
 
-- https://texn-support.ddns.net/health/live
-- https://texn-support.ddns.net/license-manager.html
-- https://texn-support.ddns.net/pos.html
+Μετά την πρώτη επιτυχημένη δημοσίευση, το GHCR package `cloud-restorder` πρέπει να είναι **Public** ώστε το Dockhand να τραβά την εικόνα χωρίς GitHub token. Το repository source είναι ήδη δημόσιο.
 
-Στο License Manager συνδέσου με το email και τον κωδικό που όρισες στο Dockhand. Πρώτα δημιούργησε πελάτη/άδεια και κατάστημα. Έπειτα σύνδεσε το Windows POS από Ρυθμίσεις → Σύνδεση Cloud με το HTTPS URL και το Store API token που εκδίδεται μία φορά.
+## Volumes
 
-## 4. Εκδόσεις και αυτόματη ενημέρωση
+- `cloud-restorder_postgres-data`: πελάτες, άδειες, χρήστες, μενού, τραπέζια και cloud παραγγελίες.
+- `cloud-restorder_license-signing-data`: ιδιωτικό κλειδί υπογραφής αδειών.
 
-Όλες οι αλλαγές κώδικα μπαίνουν στο main. Push στο main χτίζει image :main, αλλά δεν αλλάζει το production :latest. Για έκδοση:
-
-1. Όλες οι αλλαγές γίνονται στο `main`.
-2. Για νέα έκδοση ανέβασε tag από commit του `main`, π.χ. `v0.2.0` ή `v0.2.1`.
-3. Το GitHub Actions χτίζει `:v0.2.0`, ενημερώνει το `:latest` και δημιουργεί αυτόματα GitHub Release με release notes.
-4. Μετά την επιτυχημένη δημοσίευση, το workflow ενημερώνει το `.dockhand-release` στο `main`.
-5. Το προγραμματισμένο Git sync του Dockhand κάθε 5 λεπτά ανιχνεύει την αλλαγή και αναπτύσσει ξανά το stack, τραβώντας το νέο `:latest`.
-
-Μετά την πρώτη επιτυχημένη ροή, όρισε το GHCR package `cloud-restorder` σε Public για να μπορεί να το τραβά το Dockhand χωρίς GitHub token. Το Git repository είναι ήδη δημόσιο και δεν χρειάζεται Git credential στο Dockhand.
-
-## Δεδομένα και ανάκτηση
-
-- postgres-data: πελάτες, άδειες, χρήστες, μενού, τραπέζια και cloud παραγγελίες.
-- license-signing-data: ιδιωτικό κλειδί υπογραφής αδειών που φτιάχνει αυτόματα ο server.
-- caddy-data / caddy-config: πιστοποιητικό HTTPS και ρυθμίσεις Caddy.
-
-Τα named volumes δεν διαγράφονται σε απλό redeploy. Ρύθμισε αντίγραφα ασφαλείας για τα volumes postgres-data και license-signing-data. Μην χρησιμοποιήσεις docker compose down -v.
-
-## Τι συγχρονίζεται
-
-Το Windows POS συνεχίζει να γράφει στην τοπική SQLite και λειτουργεί όταν πέσει το Internet. Με ενεργό cloud sync, στέλνει αλλαγές όταν επανέλθει η σύνδεση και λαμβάνει cloud παραγγελίες tablet για αποθήκευση στη SQLite και εκτύπωση στους τοπικούς εκτυπωτές. Τα Android tablets ανοίγουν το pos.html μέσω HTTPS, χρησιμοποιούν cloud login και δεν έχουν τοπική βάση.
+Τα volumes διατηρούνται στα redeploy. Μην χρησιμοποιήσεις `docker compose down -v` και ρύθμισε αντίγραφα ασφαλείας.

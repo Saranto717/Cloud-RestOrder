@@ -8,7 +8,7 @@
 
 ## Ανάπτυξη
 
-Η υπηρεσία cloud τρέχει ως .NET 10 API και PostgreSQL μέσω Docker Compose. Οι οδηγίες για το Dockhand, αρχικό HTTP health check και μετάβαση σε HTTPS είναι στο [README-DEPLOY-EL.md](README-DEPLOY-EL.md).
+Η υπηρεσία cloud τρέχει ως .NET 10 API και PostgreSQL μέσω Docker Compose. Στο Dockhand δημιουργείται ξεχωριστό stack `cloud-restorder`, ώστε να μείνει ανέπαφο το ήδη υπάρχον `cloud`. Η αρχική δοκιμή γίνεται στο port `18081` και στη συνέχεια το υπάρχον OpenResty προωθεί το HTTPS domain σε αυτό. Οι οδηγίες είναι στο [README-DEPLOY-EL.md](README-DEPLOY-EL.md).
 
 Το cloud API εξυπηρετεί:
 
