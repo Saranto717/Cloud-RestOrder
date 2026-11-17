@@ -71,10 +71,12 @@ services:
       - "18081:8080"
     networks:
       - database
+      - api-egress
 
 networks:
   database:
     internal: true
+  api-egress: {}
 
 volumes:
   postgres-data:
