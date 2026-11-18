@@ -207,7 +207,12 @@ public sealed class CloudDatabase(NpgsqlDataSource dataSource)
                 schema_version = EXCLUDED.schema_version,
                 updated_at_utc = EXCLUDED.updated_at_utc,
                 payload = EXCLUDED.payload
-            WHERE EXCLUDED.cursor > cloud_sync_entities.cursor
+            -- Arrival order differs when the Windows POS reconnects after being
+            -- offline. Keep the newest edit time instead of overwriting it with
+            -- an older queued event that happened to arrive later.
+            WHERE EXCLUDED.updated_at_utc > cloud_sync_entities.updated_at_utc
+               OR (EXCLUDED.updated_at_utc = cloud_sync_entities.updated_at_utc
+                   AND EXCLUDED.cursor > cloud_sync_entities.cursor)
             """, connection, transaction);
         command.Parameters.AddWithValue("store_id", NpgsqlDbType.Uuid, storeId);
         command.Parameters.AddWithValue("entity_type", NpgsqlDbType.Varchar, syncEvent.EntityType!);

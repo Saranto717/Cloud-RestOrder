@@ -154,7 +154,7 @@
         using var db = await DbFactory.CreateDbContextAsync();
         var appearance = await db.RestaurantAppearances.AsNoTracking().FirstOrDefaultAsync(x => x.Id == 1);
         if (appearance is not null) { displayName = appearance.DisplayName; backgroundImage = appearance.BackgroundImageDataUri; }
-        staff = await db.Users.Where(u => u.IsActive).OrderBy(u => u.FirstName).ToListAsync();
+        staff = await db.Users.Where(u => u.IsActive && !u.IsCloudIdentity).OrderBy(u => u.FirstName).ToListAsync();
     }
 
     private string GetInitials(string name)

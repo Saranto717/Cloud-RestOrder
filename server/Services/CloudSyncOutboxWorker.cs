@@ -7,6 +7,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using RestaurantOrders.Data;
 using RestaurantOrders.Models;
+using RestaurantOrders.Services.Fiscal;
 using RestaurantOrders.Services.Orders;
 
 namespace RestaurantOrders.Services;
@@ -37,8 +38,9 @@ public sealed class CloudSyncOutboxWorker(
                 {
                     try
                     {
-                        await SynchronizeOnceAsync(settings, stoppingToken);
-                        await SetSyncStatusAsync(null, registered: null, stoppingToken);
+                        var pending = await SynchronizeOnceAsync(settings, stoppingToken);
+                        await SetSyncStatusAsync(pending == 0 ? null : $"{pending} αλλαγές περιμένουν τα συνδεδεμένα στοιχεία ή την αποστολή τοπικών αλλαγών.",
+                            registered: null, stoppingToken);
                     }
                     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
                     catch (Exception exception)
@@ -60,7 +62,7 @@ public sealed class CloudSyncOutboxWorker(
         }
     }
 
-    private async Task SynchronizeOnceAsync(CloudSyncSettings settings, CancellationToken cancellationToken)
+    private async Task<int> SynchronizeOnceAsync(CloudSyncSettings settings, CancellationToken cancellationToken)
     {
         if (!licenseService.EnforcementEnabled || !Guid.TryParse(licenseService.InstallationId, out var installationId))
             throw new InvalidOperationException("Η σύνδεση cloud είναι διαθέσιμη μόνο στην εγκατεστημένη έκδοση Windows.");
@@ -78,7 +80,7 @@ public sealed class CloudSyncOutboxWorker(
         if (string.IsNullOrWhiteSpace(settings.ProtectedDeviceSecret))
         {
             settings.ProtectedDeviceSecret = credentialProtector.ProtectDeviceSecret(deviceSecret);
-            await SaveSettingsAsync(settings, cancellationToken);
+            await SaveDeviceSecretAsync(settings, cancellationToken);
         }
 
         if (!settings.DeviceRegistered)
@@ -92,12 +94,9 @@ public sealed class CloudSyncOutboxWorker(
             await initialSnapshotSeeder.EnsureInitialSnapshotAsync(db, cancellationToken);
 
         await PushPendingEventsAsync(baseUri, installationId, deviceSecret, cancellationToken);
-        var nextCursor = await PullAndApplyAsync(baseUri, installationId, deviceSecret, settings.LastCloudCursor, cancellationToken);
-        settings.LastCloudCursor = nextCursor;
-        settings.LastSuccessfulSyncAtUtc = DateTimeOffset.UtcNow;
-        settings.LastSyncError = null;
-        await SaveSettingsAsync(settings, cancellationToken);
-        await PrintIncomingTabletOrdersAsync(cancellationToken);
+        var pending = await PullAndApplyAsync(baseUri, installationId, deviceSecret, settings.LastCloudCursor, cancellationToken);
+        await ProcessIncomingCloudDispatchAsync(cancellationToken);
+        return pending;
     }
 
     private async Task RegisterDeviceAsync(Uri baseUri, string storeToken, Guid installationId, string deviceSecret,
@@ -171,7 +170,7 @@ public sealed class CloudSyncOutboxWorker(
         await updateDb.SaveChangesAsync(cancellationToken);
     }
 
-    private async Task<long> PullAndApplyAsync(Uri baseUri, Guid installationId, string deviceSecret,
+    private async Task<int> PullAndApplyAsync(Uri baseUri, Guid installationId, string deviceSecret,
         long currentCursor, CancellationToken cancellationToken)
     {
         var cursor = currentCursor;
@@ -187,75 +186,34 @@ public sealed class CloudSyncOutboxWorker(
                 ?? throw new InvalidDataException("Το cloud επέστρεψε κενή σελίδα συγχρονισμού.");
             if (page.NextCursor < cursor || page.NextCursor == cursor && page.Entities.Count > 0)
                 throw new InvalidDataException("Ο δείκτης cloud sync δεν προχώρησε.");
-            await ApplyCloudEntitiesAsync(page.Entities, cancellationToken);
+            await CloudSyncImporter.ReceivePageAsync(dbFactory, page.Entities, page.NextCursor, cancellationToken);
             cursor = page.NextCursor;
-            await SaveCursorAsync(cursor, cancellationToken);
             if (!page.HasMore || page.Entities.Count == 0) break;
         }
-        return cursor;
+        return await CloudSyncImporter.ApplyPendingAsync(dbFactory, cancellationToken);
     }
 
-    private async Task ApplyCloudEntitiesAsync(IReadOnlyList<CloudSyncEntity> entities, CancellationToken cancellationToken)
-    {
-        if (entities.Count == 0) return;
-
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        db.SuppressCloudSyncCapture = true;
-        foreach (var entity in entities.OrderBy(item => item.Cursor))
-        {
-            var type = db.Model.GetEntityTypes().Select(item => item.ClrType).FirstOrDefault(item => item.Name == entity.EntityType);
-            if (type is null || !CloudSyncEntityPolicy.TryGetProperties(type, out var allowed)) continue;
-            var entityType = db.Model.FindEntityType(type);
-            var key = entityType?.FindPrimaryKey()?.Properties.SingleOrDefault();
-            if (key is null) continue;
-            object keyValue;
-            try { keyValue = Convert.ChangeType(entity.EntityId, Nullable.GetUnderlyingType(key.ClrType) ?? key.ClrType, CultureInfo.InvariantCulture); }
-            catch { continue; }
-
-            var existing = await db.FindAsync(type, [keyValue], cancellationToken);
-            if (entity.IsDeleted)
-            {
-                if (existing is not null) db.Remove(existing);
-                await db.SaveChangesAsync(cancellationToken);
-                continue;
-            }
-
-            var incoming = JsonSerializer.Deserialize(entity.Payload.GetRawText(), type, JsonOptions);
-            if (incoming is null) continue;
-            if (existing is null)
-            {
-                db.Entry(incoming).Property(key.Name).CurrentValue = keyValue;
-                db.Add(incoming);
-            }
-            else
-            {
-                var source = db.Entry(incoming);
-                var target = db.Entry(existing);
-                foreach (var property in allowed)
-                    target.Property(property).CurrentValue = source.Property(property).CurrentValue;
-            }
-            await db.SaveChangesAsync(cancellationToken);
-        }
-    }
-
-    private async Task PrintIncomingTabletOrdersAsync(CancellationToken cancellationToken)
+    private async Task ProcessIncomingCloudDispatchAsync(CancellationToken cancellationToken)
     {
         await using var lookup = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var orderIds = await lookup.Orders.Where(order => order.Id < 0 && order.Status == OrderStatus.Open &&
-                order.Items.Any(item => !item.IsPrinted && !item.IsCancelled))
-            .OrderBy(order => order.CreatedAt).Select(order => order.Id).ToListAsync(cancellationToken);
-        foreach (var orderId in orderIds)
+        var batchIds = await lookup.OrderPrintBatches
+            .Where(batch => batch.WindowsPrintPending || batch.DispatchNotificationPending)
+            .OrderBy(batch => batch.CreatedAt).Select(batch => batch.Id).ToListAsync(cancellationToken);
+        foreach (var batchId in batchIds)
         {
             using var scope = scopeFactory.CreateScope();
             var printerDispatch = scope.ServiceProvider.GetRequiredService<KitchenOrderDispatchService>();
             var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AppDbContext>>();
             await using var db = await factory.CreateDbContextAsync(cancellationToken);
-            var order = await db.Orders.Include(item => item.RestaurantTable).Include(item => item.WaiterUser)
-                .FirstOrDefaultAsync(item => item.Id == orderId, cancellationToken);
-            if (order?.RestaurantTable is null) continue;
-            var tableService = !order.RestaurantTable.IsTakeAway;
-            await printerDispatch.DispatchPendingAsync(db, orderId, order.RestaurantTable.Name,
-                order.WaiterUser?.FullName ?? "Tablet", "", tableService);
+            var batch = await db.OrderPrintBatches.AsNoTracking().SingleOrDefaultAsync(item => item.Id == batchId, cancellationToken);
+            if (batch is null) continue;
+            if (batch.WindowsPrintPending)
+                await printerDispatch.PrintAcceptedCloudBatchAsync(db, batchId);
+            if (batch.DispatchNotificationPending)
+            {
+                var fiscalOrderForms = scope.ServiceProvider.GetRequiredService<FiscalOrderFormService>();
+                await fiscalOrderForms.ConsumeBatchAsync(db, batchId);
+            }
         }
     }
 
@@ -265,20 +223,14 @@ public sealed class CloudSyncOutboxWorker(
         return await db.CloudSyncSettings.AsNoTracking().SingleOrDefaultAsync(item => item.Id == 1, cancellationToken);
     }
 
-    private async Task SaveSettingsAsync(CloudSyncSettings settings, CancellationToken cancellationToken)
-    {
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        db.SuppressCloudSyncCapture = true;
-        db.CloudSyncSettings.Update(settings);
-        await db.SaveChangesAsync(cancellationToken);
-    }
-
-    private async Task SaveCursorAsync(long cursor, CancellationToken cancellationToken)
+    private async Task SaveDeviceSecretAsync(CloudSyncSettings snapshot, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         db.SuppressCloudSyncCapture = true;
         var settings = await db.CloudSyncSettings.SingleAsync(item => item.Id == 1, cancellationToken);
-        settings.LastCloudCursor = cursor;
+        if (settings.ProtectedStoreToken != snapshot.ProtectedStoreToken || settings.ApiBaseUrl != snapshot.ApiBaseUrl)
+            throw new InvalidOperationException("Οι ρυθμίσεις σύνδεσης άλλαξαν. Η σύζευξη θα επαναληφθεί.");
+        settings.ProtectedDeviceSecret = snapshot.ProtectedDeviceSecret;
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -309,8 +261,6 @@ public sealed class CloudSyncOutboxWorker(
         int SchemaVersion, DateTimeOffset OccurredAtUtc, JsonElement Payload);
     private sealed record CloudSyncPushBatch(IReadOnlyList<CloudSyncPushEvent> Events);
     private sealed record CloudSyncPushAcknowledgement(Guid StoreId, int Accepted, int Duplicates);
-    private sealed record CloudSyncEntity(long Cursor, string EntityType, string EntityId, bool IsDeleted,
-        int SchemaVersion, DateTimeOffset UpdatedAtUtc, JsonElement Payload);
     private sealed record CloudSyncEntityPage(Guid StoreId, IReadOnlyList<CloudSyncEntity> Entities, long NextCursor, bool HasMore);
 }
 

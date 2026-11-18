@@ -2831,7 +2831,7 @@
 
     private async Task ConfirmTableTransfer()
     {
-        if (tableTransferBusy || tableTransferTargetId <= 0) return;
+        if (tableTransferBusy || tableTransferTargetId == 0) return;
         tableTransferBusy = true;
         try { await HandleTransferResult(await Transfers.MoveAllAsync(order.Id, tableTransferTargetId, currentUserId)); }
         catch (Exception) { tableTransferMessage = "Η μεταφορά δεν επιβεβαιώθηκε λόγω σφάλματος σύνδεσης ή αποθήκευσης. Ανανέωσε τη σελίδα και έλεγξε τυχόν εκκρεμή μεταφορά πριν συνεχίσεις."; }
@@ -5567,6 +5567,7 @@
         {
             using var db = await DbFactory.CreateDbContextAsync();
             var waiterName = (await db.Users.FindAsync(currentUserId))?.FullName ?? "-";
+            var cloudHosted = db.IsCloudHosted;
             KitchenOrderDispatchResult dispatch;
             using (await TableOperationCoordinator.EnterAsync(TableId))
             {
@@ -5595,7 +5596,8 @@
             }
 
             FiscalOrderFormDispatchResult? fiscalDispatch = null;
-            if (!isTakeAwayMode && dispatch.SubmittedItems.Count > 0)
+            var pendingFiscalOnWindows = cloudHosted && !isTakeAwayMode && dispatch.SubmittedItems.Count > 0;
+            if (!cloudHosted && !isTakeAwayMode && dispatch.SubmittedItems.Count > 0)
             {
                 try
                 {
@@ -5613,10 +5615,15 @@
             orderCommentDraft = "";
             var messages = new List<string>
             {
-                dispatch.SuccessfulStations.Count > 0
+                dispatch.PendingOnWindows
+                    ? "Η παραγγελία καταχωρήθηκε και περιμένει τον τοπικό υπολογιστή για εκτύπωση."
+                    : dispatch.SuccessfulStations.Count > 0
                     ? $"Η παραγγελία στάλθηκε σε: {string.Join(", ", dispatch.SuccessfulStations)}."
                     : "Η παραγγελία καταχωρήθηκε."
             };
+
+            if (pendingFiscalOnWindows)
+                messages.Add("Η έκδοση και εκτύπωση του Δελτίου Παραγγελίας θα γίνει από τον τοπικό υπολογιστή.");
 
             if (dispatch.FailedStations.Count > 0)
                 messages.Add($"Αποτυχία εκτύπωσης στην κουζίνα/μπαρ: {string.Join(", ", dispatch.FailedStations)}.");
@@ -5670,6 +5677,38 @@
         if (!await EnsureCurrentTableAvailable()) return;
 
         using var db = await DbFactory.CreateDbContextAsync();
+
+        if (db.IsCloudHosted)
+        {
+            var activeIds = await db.OrderItems.Where(item => item.OrderId == order.Id && item.IsPrinted && !item.IsCancelled)
+                .Select(item => item.Id).ToArrayAsync();
+            if (activeIds.Length == 0)
+            {
+                statusMessage = "Δεν υπάρχουν ενεργά είδη για επανεκτύπωση.";
+                return;
+            }
+            var accepted = await db.OrderItems.Where(item => activeIds.Contains(item.Id))
+                .Include(item => item.MenuItem).ThenInclude(menu => menu!.MenuCategory)
+                .ToListAsync();
+            var number = await db.OrderPrintBatches.Where(batch => batch.OrderId == order.Id)
+                .Select(batch => (int?)batch.Number).MaxAsync() ?? 0;
+            var dailyNumber = await db.OrderPrintBatches.Where(batch => batch.OrderId == order.Id)
+                .OrderByDescending(batch => batch.Id).Select(batch => (int?)batch.DailyNumber).FirstOrDefaultAsync() ?? 0;
+            db.OrderPrintBatches.Add(new OrderPrintBatch
+            {
+                OrderId = order.Id,
+                Number = number + 1,
+                DailyNumber = dailyNumber,
+                AcceptedTableName = tableName,
+                AcceptedOrderComment = orderCommentDraft,
+                AcceptedLinesJson = JsonSerializer.Serialize(accepted.Select(AcceptedOrderLine.From)),
+                WindowsPrintPending = true
+            });
+            foreach (var item in accepted) item.KitchenPrintUnconfirmed = true;
+            await db.SaveChangesAsync();
+            statusMessage = "Η επανεκτύπωση καταχωρήθηκε και περιμένει τον τοπικό υπολογιστή.";
+            return;
+        }
 
         var activeItems = await db.OrderItems
             .Include(oi => oi.MenuItem).ThenInclude(mi => mi!.MenuCategory).ThenInclude(c => c!.PrinterStations)

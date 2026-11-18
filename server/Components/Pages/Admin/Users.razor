@@ -195,7 +195,7 @@ else
     private async Task Load()
     {
         using var db = await DbFactory.CreateDbContextAsync();
-        items = await db.Users.OrderBy(u => u.FirstName).ToListAsync();
+        items = await db.Users.Where(u => !u.IsCloudIdentity).OrderBy(u => u.FirstName).ToListAsync();
         foreach (var u in items)
         {
             if (!codeResetValues.ContainsKey(u.Id)) codeResetValues[u.Id] = "";

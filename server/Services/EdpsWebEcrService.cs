@@ -64,7 +64,7 @@ public sealed class EdpsWebEcrService(
         BankPosTerminalSettings settings,
         CancellationToken cancellationToken = default)
     {
-        if (settings.Id <= 0)
+        if (settings.Id == 0)
             return new(false, "Αποθήκευσε πρώτα τη ρύθμιση του EDPS POS.");
         if (!IsEdpsWebEcr(settings))
             return new(false, "Επίλεξε το EDPS Middleware (Chronos WebECR API v6).");

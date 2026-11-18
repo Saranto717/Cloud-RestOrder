@@ -16,7 +16,12 @@ public class OrderPrintBatch
     // Durable notification of a newly accepted table batch, consumed by the fiscal workflow.
     public string? AcceptedLinesJson { get; set; }
     public string? AcceptedTableName { get; set; }
+    public string? AcceptedOrderComment { get; set; }
     public bool DispatchNotificationPending { get; set; }
+
+    // A cloud request is accepted immediately but printed by the paired Windows
+    // POS, which is the only server that can reach the restaurant's LAN printers.
+    public bool WindowsPrintPending { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 

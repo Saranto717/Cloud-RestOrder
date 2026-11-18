@@ -130,19 +130,23 @@ public sealed class CloudTenantDatabaseProvisioner(IConfiguration configuration,
                 InitializedStores.TryAdd(storeId, 0);
             }
             var shadowUserId = GetShadowUserId(cloudUserId);
-            if (!await db.Users.AnyAsync(user => user.Id == shadowUserId, cancellationToken))
+            var user = await db.Users.SingleOrDefaultAsync(item => item.Id == shadowUserId, cancellationToken);
+            if (user is null)
             {
-                var user = new User
+                user = new User
                 {
                     Id = shadowUserId,
-                    FirstName = string.IsNullOrWhiteSpace(email) ? "Cloud χρήστης" : email,
-                    Role = role,
-                    IsActive = true
+                    IsCloudIdentity = true
                 };
                 db.Users.Add(user);
-                db.SuppressCloudSyncCapture = true;
-                await db.SaveChangesAsync(cancellationToken);
             }
+            user.FirstName = string.IsNullOrWhiteSpace(email) ? "Cloud χρήστης" : email;
+            user.Role = role;
+            user.IsActive = true;
+            user.IsCloudIdentity = true;
+            // Replicate audit identities before orders that reference them. Local
+            // login explicitly rejects these identities, regardless of their role.
+            await db.SaveChangesAsync(cancellationToken);
         }
         finally { tenantLock.Release(); }
     }
@@ -177,7 +181,7 @@ public sealed class CloudGatewayAuthenticationHandler(
         await using var db = await dbFactory.CreateDbContextAsync(Context.RequestAborted);
         var shadowUserId = CloudTenantDatabaseProvisioner.GetShadowUserId(parsedUser);
         var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(
-            item => item.Id == shadowUserId && item.IsActive && item.Role == cloudRole,
+            item => item.Id == shadowUserId && item.IsCloudIdentity && item.IsActive && item.Role == cloudRole,
             Context.RequestAborted);
         if (user is null) return AuthenticateResult.Fail("Δεν υπάρχει ενεργός χρήστης για τον cloud ρόλο.");
 
@@ -245,8 +249,10 @@ public sealed class CloudTenantSyncWorker(
                     CloudTenantDatabaseProvisioner.InitializedStores.TryAdd(storeId, 0);
                 }
             }
-            await PullAsync(client, factory, storeId, cancellationToken);
             await PushAsync(client, factory, storeId, cancellationToken);
+            await PullAsync(client, factory, storeId, cancellationToken);
+            var pending = await CloudSyncImporter.ApplyPendingAsync(factory, cancellationToken);
+            if (pending > 0) logger.LogWarning("Cloud store {StoreId} has {Pending} received changes waiting for dependencies or local delivery.", storeId, pending);
         }
         finally { tenantLock.Release(); }
     }
@@ -263,52 +269,9 @@ public sealed class CloudTenantSyncWorker(
                 ?? throw new InvalidDataException("The cloud API returned an empty sync page.");
             if (page.StoreId != storeId || page.NextCursor < cursor)
                 throw new InvalidDataException("The cloud API returned an invalid tenant or cursor.");
-            await ApplyEntitiesAsync(factory, page.Entities, cancellationToken);
+            await CloudSyncImporter.ReceivePageAsync(factory, page.Entities, page.NextCursor, cancellationToken);
             cursor = page.NextCursor;
-            await using var update = await factory.CreateDbContextAsync(cancellationToken);
-            update.SuppressCloudSyncCapture = true;
-            var settings = await update.CloudSyncSettings.SingleAsync(item => item.Id == 1, cancellationToken);
-            settings.LastCloudCursor = cursor;
-            await update.SaveChangesAsync(cancellationToken);
             if (!page.HasMore || page.Entities.Count == 0) break;
-        }
-    }
-
-    private static async Task ApplyEntitiesAsync(IDbContextFactory<AppDbContext> factory, IReadOnlyList<SyncEntity> entities, CancellationToken cancellationToken)
-    {
-        await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        db.SuppressCloudSyncCapture = true;
-        foreach (var entity in entities.OrderBy(item => item.Cursor))
-        {
-            var type = db.Model.GetEntityTypes().Select(item => item.ClrType).FirstOrDefault(item => item.Name == entity.EntityType);
-            if (type is null) continue;
-            if (!CloudSyncEntityPolicy.TryGetProperties(type, out var allowed)) continue;
-            var key = db.Model.FindEntityType(type)?.FindPrimaryKey()?.Properties.SingleOrDefault();
-            if (key is null) continue;
-            object keyValue;
-            try { keyValue = Convert.ChangeType(entity.EntityId, Nullable.GetUnderlyingType(key.ClrType) ?? key.ClrType, CultureInfo.InvariantCulture); }
-            catch { continue; }
-            var existing = await db.FindAsync(type, [keyValue], cancellationToken);
-            if (entity.IsDeleted)
-            {
-                if (existing is not null) db.Remove(existing);
-                continue;
-            }
-            var incoming = JsonSerializer.Deserialize(entity.Payload.GetRawText(), type, JsonOptions);
-            if (incoming is null) continue;
-            if (existing is null)
-            {
-                db.Entry(incoming).Property(key.Name).CurrentValue = keyValue;
-                db.Add(incoming);
-            }
-            else
-            {
-                var source = db.Entry(incoming);
-                var target = db.Entry(existing);
-                foreach (var property in allowed)
-                    target.Property(property).CurrentValue = source.Property(property).CurrentValue;
-            }
-            await db.SaveChangesAsync(cancellationToken);
         }
     }
 
@@ -338,8 +301,11 @@ public sealed class CloudTenantSyncWorker(
             }
             using var content = new ByteArrayContent(body);
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
-            var response = await client.PostAsync($"api/internal/cloud-web/stores/{storeId:D}/events", content, cancellationToken);
+            using var response = await client.PostAsync($"api/internal/cloud-web/stores/{storeId:D}/events", content, cancellationToken);
             if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"Sync push failed with HTTP {(int)response.StatusCode}.");
+            var result = await response.Content.ReadFromJsonAsync<PushAcknowledgement>(JsonOptions, cancellationToken);
+            if (result is null || result.StoreId != storeId || result.Accepted + result.Duplicates != events.Count)
+                throw new InvalidDataException("The cloud API did not acknowledge the complete batch for this store.");
             await using var update = await factory.CreateDbContextAsync(cancellationToken);
             update.SuppressCloudSyncCapture = true;
             var ids = events.Select(item => item.EventId).ToHashSet();
@@ -358,8 +324,8 @@ public sealed class CloudTenantSyncWorker(
         return value;
     }
 
-    private sealed record SyncPage(Guid StoreId, IReadOnlyList<SyncEntity> Entities, long NextCursor, bool HasMore);
-    private sealed record SyncEntity(long Cursor, string EntityType, string EntityId, bool IsDeleted, int SchemaVersion, DateTimeOffset UpdatedAtUtc, JsonElement Payload);
+    private sealed record SyncPage(Guid StoreId, IReadOnlyList<CloudSyncEntity> Entities, long NextCursor, bool HasMore);
+    private sealed record PushAcknowledgement(Guid StoreId, int Accepted, int Duplicates);
     private sealed record PushBatch(IReadOnlyList<PushEvent> Events);
     private sealed record PushEvent(Guid EventId, string EntityType, string EntityId, string EventType, int SchemaVersion, DateTimeOffset OccurredAtUtc, JsonElement Payload);
 }

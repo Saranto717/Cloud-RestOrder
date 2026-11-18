@@ -24,3 +24,22 @@ public sealed class CloudSyncSnapshotState
     public DateTimeOffset? CompletedAtUtc { get; set; }
     public int SnapshotVersion { get; set; }
 }
+
+/// <summary>Permanent cloud key high-water mark, retained after domain rows are deleted.</summary>
+public sealed class CloudHostedIdSequence
+{
+    public string EntityType { get; set; } = "";
+    public int CurrentId { get; set; }
+}
+
+/// <summary>Latest received state, durably retained until its references can be applied.</summary>
+public sealed class CloudSyncInboxEntry
+{
+    public string EntityType { get; set; } = "";
+    public string EntityId { get; set; } = "";
+    public long Cursor { get; set; }
+    public bool IsDeleted { get; set; }
+    public int SchemaVersion { get; set; }
+    public DateTimeOffset UpdatedAtUtc { get; set; }
+    public string PayloadJson { get; set; } = "{}";
+}

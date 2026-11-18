@@ -209,7 +209,7 @@
     }
     private async Task SelectTerminal(ChangeEventArgs e)
     {
-        if (int.TryParse(e.Value?.ToString(), out var id) && id > 0) await LoadTerminal(id); else NewTerminal();
+        if (int.TryParse(e.Value?.ToString(), out var id) && id != 0) await LoadTerminal(id); else NewTerminal();
     }
     private async Task LoadTerminal(int id)
     {
@@ -262,7 +262,7 @@
         if (!UsesCommonWebEcrApi) { isError = true; message = "Επίλεξε κοινό WebECR REST πρωτόκολλο."; return; }
         // Save first so the returned API key can be persisted against a stable database record.
         await Save();
-        if (isError || edit.Id <= 0) return;
+        if (isError || edit.Id == 0) return;
         busy = true; message = $"Γίνεται authentication και Redeem στο {CommonWebEcrProviderProfile.ProviderLabel(edit.Provider)} WebECR…";
         try
         {
@@ -279,7 +279,7 @@
     {
         if (!UsesCommonWebEcrApi) { isError = true; message = "Επίλεξε κοινό WebECR REST πρωτόκολλο."; return; }
         await Save();
-        if (isError || edit.Id <= 0) return;
+        if (isError || edit.Id == 0) return;
         busy = true; message = "Αναζήτηση τερματικών στο WebECR…";
         try
         {
@@ -310,7 +310,7 @@
     {
         if (!IsEdpsMiddlewareV6) { isError = true; message = "Επίλεξε EDPS Middleware (Chronos WebECR API v6)."; return; }
         await Save();
-        if (isError || edit.Id <= 0) return;
+        if (isError || edit.Id == 0) return;
         busy = true; message = "Γίνεται authentication και Redeem στο EDPS Web API…";
         try
         {

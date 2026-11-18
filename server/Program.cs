@@ -84,8 +84,16 @@ builder.Services.AddScoped<VivaCloudTerminalService>();
 builder.Services.AddHttpClient("EDPS-WebECR");
 builder.Services.AddScoped<EdpsWebEcrService>();
 builder.Services.AddHttpClient("AADE-Registry");
-builder.Services.AddSingleton<FiscalProviderExchangeStore>();
-builder.Services.AddSingleton<IParochosFiscalProvider, ParochosService>();
+if (cloudWebMode)
+{
+    builder.Services.AddScoped<FiscalProviderExchangeStore>();
+    builder.Services.AddScoped<IParochosFiscalProvider, ParochosService>();
+}
+else
+{
+    builder.Services.AddSingleton<FiscalProviderExchangeStore>();
+    builder.Services.AddSingleton<IParochosFiscalProvider, ParochosService>();
+}
 builder.Services.AddTransient<AadeRegistryService>();
 builder.Services.AddScoped<IFiscalDocumentService, ParochosFiscalDocumentService>();
 builder.Services.AddScoped<FiscalConfigurationService>();
@@ -255,7 +263,7 @@ app.MapPost("/api/login", async (HttpContext http, IDbContextFactory<AppDbContex
     using var db = await dbFactory.CreateDbContextAsync();
     var user = await db.Users.FindAsync(userId);
 
-    var valid = user is not null && user.IsActive && user.Role == Role.Admin
+    var valid = user is not null && user.IsActive && !user.IsCloudIdentity && user.Role == Role.Admin
         && (!user.HasCode || PasswordHasher.Verify(code, user.CodeHash!));
 
     if (!valid)
@@ -288,7 +296,7 @@ app.MapPost("/api/staff-login", async (HttpContext http, IDbContextFactory<AppDb
     using var db = await dbFactory.CreateDbContextAsync();
     var user = await db.Users.FindAsync(userId);
 
-    var valid = user is not null && user.IsActive
+    var valid = user is not null && user.IsActive && !user.IsCloudIdentity
         && (!user.HasCode || PasswordHasher.Verify(code, user.CodeHash!));
 
     if (!valid)

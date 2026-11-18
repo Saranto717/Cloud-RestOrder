@@ -400,7 +400,9 @@ public sealed class CloudPosDatabase(NpgsqlDataSource dataSource)
             VALUES(@store_id,@entity_type,@entity_id,@cursor,FALSE,1,now(),@payload::jsonb)
             ON CONFLICT(store_id,entity_type,entity_id) DO UPDATE SET cursor=EXCLUDED.cursor,
               is_deleted=FALSE,schema_version=1,updated_at_utc=EXCLUDED.updated_at_utc,payload=EXCLUDED.payload
-            WHERE EXCLUDED.cursor>cloud_sync_entities.cursor
+            WHERE EXCLUDED.updated_at_utc>cloud_sync_entities.updated_at_utc
+               OR (EXCLUDED.updated_at_utc=cloud_sync_entities.updated_at_utc
+                   AND EXCLUDED.cursor>cloud_sync_entities.cursor)
             """, connection, transaction);
         upsert.Parameters.AddWithValue("store_id", NpgsqlDbType.Uuid, storeId);
         upsert.Parameters.AddWithValue("entity_type", NpgsqlDbType.Varchar, entityType);

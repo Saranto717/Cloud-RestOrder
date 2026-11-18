@@ -18,6 +18,10 @@ public class User
     public Role Role { get; set; } = Role.Waiter;
     public bool IsActive { get; set; } = true;
 
+    // Cloud account identities travel with orders for attribution, but are not
+    // PIN-less Windows accounts and cannot authenticate through local login.
+    public bool IsCloudIdentity { get; set; }
+
     [NotMapped]
     public bool HasCode => !string.IsNullOrEmpty(CodeHash);
 

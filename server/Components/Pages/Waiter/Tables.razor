@@ -814,7 +814,7 @@
             .OrderBy(a => a.Name)
             .ToListAsync();
 
-        if (TransferFromTableId is > 0 && TransferOrderId is > 0)
+        if (TransferFromTableId is not null and not 0 && TransferOrderId is not null and not 0)
         {
             var source = await db.Tables.AsNoTracking().FirstOrDefaultAsync(t => t.Id == TransferFromTableId && t.IsActive);
             var sourceOrderIsOpen = await db.Orders.AnyAsync(o => o.Id == TransferOrderId && o.RestaurantTableId == TransferFromTableId && o.Status == OrderStatus.Open);

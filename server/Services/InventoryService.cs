@@ -35,7 +35,7 @@ public sealed class InventoryService(IDbContextFactory<AppDbContext> dbFactory)
     {
         using var db = await dbFactory.CreateDbContextAsync();
         if (!await db.MenuItems.AnyAsync(x => x.Id == menuItemId)) throw new InvalidOperationException("Το προϊόν δεν βρέθηκε.");
-        if (lines.Any(x => x.IngredientId <= 0 || x.Quantity <= 0)) throw new InvalidOperationException("Κάθε υλικό συνταγής χρειάζεται θετική ποσότητα.");
+        if (lines.Any(x => x.IngredientId == 0 || x.Quantity <= 0)) throw new InvalidOperationException("Κάθε υλικό συνταγής χρειάζεται θετική ποσότητα.");
         if (lines.GroupBy(x => x.IngredientId).Any(x => x.Count() > 1)) throw new InvalidOperationException("Το ίδιο υλικό υπάρχει δύο φορές στη συνταγή.");
         var ids = lines.Select(x => x.IngredientId).ToArray();
         if (ids.Length > 0 && await db.InventoryItems.CountAsync(x => ids.Contains(x.Id) && x.IsActive) != ids.Length)

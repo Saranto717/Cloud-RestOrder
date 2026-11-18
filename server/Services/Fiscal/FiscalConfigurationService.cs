@@ -126,7 +126,7 @@ public sealed class FiscalConfigurationService
         if (!string.IsNullOrWhiteSpace(order.RestaurantTable?.Name))
             return order.RestaurantTable!.Name.Trim();
 
-        if (order.RestaurantTableId > 0)
+        if (order.RestaurantTableId != 0)
         {
             return await db.Tables
                 .Where(t => t.Id == order.RestaurantTableId)

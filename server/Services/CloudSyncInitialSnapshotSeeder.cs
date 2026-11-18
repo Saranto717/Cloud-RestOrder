@@ -14,7 +14,7 @@ namespace RestaurantOrders.Services;
 /// </summary>
 public sealed class CloudSyncInitialSnapshotSeeder
 {
-    private const int CurrentSnapshotVersion = 2;
+    private const int CurrentSnapshotVersion = 3;
 
     public async Task EnsureInitialSnapshotAsync(AppDbContext db, CancellationToken cancellationToken)
     {
@@ -67,6 +67,19 @@ public sealed class CloudSyncInitialSnapshotSeeder
         AddSnapshots(db, events, await db.InventoryMovements.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
         AddSnapshots(db, events, await db.TableTransfers.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
         AddSnapshots(db, events, await db.ReceiptNumberHolds.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        foreach (var join in CloudSyncEntityPolicy.JoinKeys)
+        {
+            var rows = await db.Set<Dictionary<string, object>>(join.Key).AsNoTracking().ToListAsync(cancellationToken);
+            foreach (var row in rows)
+                events.Add(new CloudSyncOutboxEvent
+                {
+                    EntityType = join.Key,
+                    EntityId = string.Join(":", join.Value.Select(key => Convert.ToString(row[key], CultureInfo.InvariantCulture))),
+                    EventType = "upsert",
+                    OccurredAtUtc = occurredAtUtc,
+                    PayloadJson = JsonSerializer.Serialize(row)
+                });
+        }
 
         db.CloudSyncOutboxEvents.AddRange(events);
         state.CompletedAtUtc = occurredAtUtc;

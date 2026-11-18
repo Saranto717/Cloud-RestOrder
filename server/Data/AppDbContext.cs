@@ -1,10 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Options;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Globalization;
 using System.Text.Json;
-using System.Security.Cryptography;
 using RestaurantOrders.Models;
 using RestaurantOrders.Services;
 
@@ -58,7 +59,10 @@ public class AppDbContext : DbContext
     public DbSet<CloudSyncOutboxEvent> CloudSyncOutboxEvents => Set<CloudSyncOutboxEvent>();
     public DbSet<CloudSyncSnapshotState> CloudSyncSnapshotStates => Set<CloudSyncSnapshotState>();
     public DbSet<CloudSyncSettings> CloudSyncSettings => Set<CloudSyncSettings>();
+    public DbSet<CloudSyncInboxEntry> CloudSyncInboxEntries => Set<CloudSyncInboxEntry>();
     public bool SuppressCloudSyncCapture { get; set; }
+    internal bool ApplyingCloudSync { get; set; }
+    public bool IsCloudHosted => _cloudHosted;
 
     // Only the transfer service may finalize the records locked by its own journal.
     internal bool FinalizingTableTransfer { get; set; }
@@ -70,7 +74,7 @@ public class AppDbContext : DbContext
 
     private void CheckTransferLocks()
     {
-        if (FinalizingTableTransfer) return;
+        if (FinalizingTableTransfer || ApplyingCloudSync) return;
         ChangeTracker.DetectChanges();
         var orders = new HashSet<int>();
         var tables = new HashSet<int>();
@@ -78,7 +82,7 @@ public class AppDbContext : DbContext
         {
             if (entry.Entity is Order order)
             {
-                if (order.Id > 0) orders.Add(order.Id);
+                if (order.Id != 0) orders.Add(order.Id);
                 tables.Add(order.RestaurantTableId);
                 if (entry.State != EntityState.Added) tables.Add(entry.OriginalValues.GetValue<int>(nameof(Order.RestaurantTableId)));
             }
@@ -109,8 +113,8 @@ public class AppDbContext : DbContext
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
-        AssignCloudHostedIds();
         using var transaction = Database.CurrentTransaction is null ? Database.BeginTransaction() : null;
+        AssignCloudHostedIds();
         CheckTransferLocks();
         var syncChanges = IsCloudSyncEnabled && !SuppressCloudSyncCapture && acceptAllChangesOnSuccess ? CaptureCloudSyncChanges() : [];
         var result = base.SaveChanges(acceptAllChangesOnSuccess);
@@ -125,8 +129,8 @@ public class AppDbContext : DbContext
 
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
-        AssignCloudHostedIds();
         await using var transaction = Database.CurrentTransaction is null ? await Database.BeginTransactionAsync(cancellationToken) : null;
+        AssignCloudHostedIds();
         CheckTransferLocks();
         var syncChanges = IsCloudSyncEnabled && !SuppressCloudSyncCapture && acceptAllChangesOnSuccess ? CaptureCloudSyncChanges() : [];
         var result = await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
@@ -146,24 +150,24 @@ public class AppDbContext : DbContext
 
         foreach (var entry in ChangeTracker.Entries())
         {
-            if (!CloudSyncEntityPolicy.TryGetProperties(entry.Entity.GetType(), out var allowedProperties)) continue;
+            if (!CloudSyncEntityPolicy.TryGetProperties(entry.Metadata, out var allowedProperties)) continue;
             if (entry.State is not (EntityState.Added or EntityState.Modified or EntityState.Deleted)) continue;
             if (entry.State == EntityState.Modified &&
                 !entry.Properties.Any(property => property.IsModified && allowedProperties.Contains(property.Metadata.Name)))
                 continue;
 
-            var key = entry.Metadata.FindPrimaryKey()?.Properties.SingleOrDefault();
-            if (key is null) continue;
+            var keys = entry.Metadata.FindPrimaryKey()?.Properties.Select(key => key.Name).ToArray();
+            if (keys is null || keys.Length == 0) continue;
 
             var eventType = entry.State == EntityState.Deleted ? "delete" : "upsert";
             var entityId = entry.State == EntityState.Deleted
-                ? Convert.ToString(entry.Property(key.Name).OriginalValue, CultureInfo.InvariantCulture)
+                ? CloudSyncEntityPolicy.ReadEntityId(entry, keys, useOriginalValues: true)
                 : null;
             var deletedPayload = entry.State == EntityState.Deleted
                 ? JsonSerializer.Serialize(CloudSyncEntityPolicy.ReadValues(entry, allowedProperties, useOriginalValues: true))
                 : null;
 
-            changes.Add(new PendingCloudSyncChange(entry, key.Name, allowedProperties, eventType, entityId, deletedPayload));
+            changes.Add(new PendingCloudSyncChange(entry, keys, allowedProperties, eventType, entityId, deletedPayload));
         }
 
         return changes;
@@ -176,18 +180,39 @@ public class AppDbContext : DbContext
         if (!_cloudHosted) return;
         foreach (var entry in ChangeTracker.Entries().Where(item => item.State == EntityState.Added))
         {
-            var key = entry.Metadata.FindPrimaryKey()?.Properties.SingleOrDefault();
-            if (key?.ClrType != typeof(int) || entry.Property(key.Name).CurrentValue is not 0) continue;
-            // New rows created in the cloud use negative IDs, leaving the positive
-            // ID range used by an offline Windows database free from collisions.
-            entry.Property(key.Name).CurrentValue = -RandomNumberGenerator.GetInt32(1, int.MaxValue);
+            var keys = entry.Metadata.FindPrimaryKey()?.Properties;
+            if (keys?.Count != 1) continue;
+            var key = keys[0];
+            if (key?.ClrType != typeof(int) || key.ValueGenerated != ValueGenerated.OnAdd) continue;
+            var property = entry.Property(key.Name);
+            if (!property.IsTemporary && property.CurrentValue is not 0) continue;
+            // EF assigns temporary keys as soon as Add is called. Replace those
+            // keys too, and persist the allocator in the same write transaction.
+            // The range below -1 billion belongs to cloud account audit identities.
+            var table = entry.Metadata.GetTableName()!.Replace("\"", "\"\"");
+            using var command = Database.GetDbConnection().CreateCommand();
+            command.Transaction = Database.CurrentTransaction!.GetDbTransaction();
+            command.CommandText = $"""
+                INSERT INTO CloudHostedIdSequences (EntityType, CurrentId)
+                VALUES (@entityType, COALESCE((SELECT MIN(Id) FROM "{table}" WHERE Id < 0 AND Id > -1000000000), 0) - 1)
+                ON CONFLICT (EntityType) DO UPDATE SET CurrentId = MIN(CurrentId,
+                    COALESCE((SELECT MIN(Id) FROM "{table}" WHERE Id < 0 AND Id > -1000000000), 0)) - 1
+                RETURNING CurrentId
+                """;
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "@entityType";
+            parameter.Value = entry.Metadata.Name;
+            command.Parameters.Add(parameter);
+            var generated = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+            if (generated <= -1_000_000_000) throw new InvalidOperationException("Cloud ID range exhausted.");
+            property.CurrentValue = generated;
+            property.IsTemporary = false;
         }
     }
 
     private static CloudSyncOutboxEvent CreateOutboxEvent(PendingCloudSyncChange change)
     {
-        var entityId = change.DeletedEntityId ?? Convert.ToString(
-            change.Entry.Property(change.KeyProperty).CurrentValue, CultureInfo.InvariantCulture);
+        var entityId = change.DeletedEntityId ?? CloudSyncEntityPolicy.ReadEntityId(change.Entry, change.KeyProperties, useOriginalValues: false);
         if (string.IsNullOrWhiteSpace(entityId) || entityId == "0")
             throw new InvalidOperationException("A cloud sync event could not be created because its entity ID was not generated.");
 
@@ -197,7 +222,7 @@ public class AppDbContext : DbContext
         return new CloudSyncOutboxEvent
         {
             EventId = Guid.NewGuid(),
-            EntityType = change.Entry.Metadata.ClrType.Name,
+            EntityType = CloudSyncEntityPolicy.EntityName(change.Entry.Metadata),
             EntityId = entityId,
             EventType = change.EventType,
             SchemaVersion = 1,
@@ -208,7 +233,7 @@ public class AppDbContext : DbContext
 
     private sealed record PendingCloudSyncChange(
         EntityEntry Entry,
-        string KeyProperty,
+        IReadOnlyList<string> KeyProperties,
         IReadOnlySet<string> AllowedProperties,
         string EventType,
         string? DeletedEntityId,
@@ -216,6 +241,12 @@ public class AppDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<CloudHostedIdSequence>().ToTable("CloudHostedIdSequences").HasKey(item => item.EntityType);
+        modelBuilder.Entity<CloudSyncInboxEntry>(entity =>
+        {
+            entity.HasKey(item => new { item.EntityType, item.EntityId });
+            entity.HasIndex(item => item.Cursor);
+        });
         modelBuilder.Entity<CloudSyncOutboxEvent>(entity =>
         {
             entity.ToTable("CloudSyncOutboxEvents");
@@ -353,8 +384,7 @@ public class AppDbContext : DbContext
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<OrderPrintBatch>()
-            .HasIndex(b => new { b.OrderId, b.Number })
-            .IsUnique();
+            .HasIndex(b => new { b.OrderId, b.Number });
 
         modelBuilder.Entity<OrderItem>()
             .HasOne(oi => oi.OrderPrintBatch)
@@ -416,6 +446,11 @@ public class AppDbContext : DbContext
 
 public static class CloudSyncEntityPolicy
 {
+    public static readonly IReadOnlyDictionary<string, string[]> JoinKeys = new Dictionary<string, string[]>
+    {
+        ["MenuCategoryPrinterStation"] = ["MenuCategoryId", "PrinterStationId"],
+        ["ExtraOptionMenuCategory"] = ["ExtraOptionId", "MenuCategoryId"]
+    };
     private static readonly string[] ExcludedProperties =
     [
         "AadeRegistryPassword", "ParochosSubscriptionKey", "ParochosPassword",
@@ -451,6 +486,22 @@ public static class CloudSyncEntityPolicy
 
     public static bool TryGetProperties(Type entityType, out IReadOnlySet<string> properties) =>
         Properties.TryGetValue(entityType, out properties!);
+
+    public static bool TryGetProperties(IEntityType entityType, out IReadOnlySet<string> properties)
+    {
+        if (JoinKeys.TryGetValue(entityType.Name, out var keys))
+        {
+            properties = keys.ToHashSet(StringComparer.Ordinal);
+            return true;
+        }
+        return TryGetProperties(entityType.ClrType, out properties);
+    }
+
+    public static string EntityName(IEntityType entityType) => entityType.HasSharedClrType ? entityType.Name : entityType.ClrType.Name;
+
+    public static string ReadEntityId(EntityEntry entry, IReadOnlyList<string> keys, bool useOriginalValues) =>
+        string.Join(":", keys.Select(name => Convert.ToString(useOriginalValues ? entry.Property(name).OriginalValue : entry.Property(name).CurrentValue,
+            CultureInfo.InvariantCulture)));
 
     public static IReadOnlyDictionary<Type, IReadOnlySet<string>> SnapshotTypes => Properties;
 

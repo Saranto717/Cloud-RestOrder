@@ -10,7 +10,7 @@
 - **Repository:** `https://github.com/Saranto717/Cloud-RestOrder.git`
 - **Branch:** `main`
 - **Compose file:** `docker-compose.yml`
-- **Scheduled sync:** ενεργό, κάθε 5 λεπτά
+- **Scheduled sync:** απενεργοποιημένο μέχρι να δημοσιευτεί η έκδοση `v0.3.0` και να υπάρχουν και τα δύο νέα images στο GHCR. Μετά την επιτυχή πρώτη εγκατάσταση, ενεργοποίησέ το κάθε 5 λεπτά.
 
 Το νέο stack χρησιμοποιεί τα images `ghcr.io/saranto717/cloud-restorder:latest` (API) και `ghcr.io/saranto717/cloud-restorder-web:latest` (πλήρης εφαρμογή POS). Το Compose έχει `pull_policy: always`. Τα δεδομένα του cloud POS αποθηκεύονται ανά κατάστημα στο `cloud-web-data`, χωριστά από τα volumes του παλιού stack.
 
@@ -65,7 +65,7 @@
 
 Όλες οι αλλαγές κώδικα γίνονται στο `main`. Κάθε tag έκδοσης όπως `v0.2.1` δημιουργεί Docker image με tag έκδοσης και `latest`, GitHub Release με αυτόματα release notes και commit `.dockhand-release` στο `main`. Το προγραμματισμένο Git sync του Dockhand εντοπίζει το commit και αναπτύσσει το νέο image.
 
-Μετά την πρώτη επιτυχημένη δημοσίευση, το GHCR package `cloud-restorder` πρέπει να είναι **Public** ώστε το Dockhand να τραβά την εικόνα χωρίς GitHub token. Το repository source είναι ήδη δημόσιο.
+Μετά την πρώτη επιτυχημένη δημοσίευση, και τα δύο GHCR packages (`cloud-restorder` και `cloud-restorder-web`) πρέπει να είναι **Public** ώστε το Dockhand να τραβά τις εικόνες χωρίς GitHub token. Το repository source είναι ήδη δημόσιο.
 
 ## Volumes
 

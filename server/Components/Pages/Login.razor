@@ -68,7 +68,7 @@
     protected override async Task OnInitializedAsync()
     {
         using var db = await DbFactory.CreateDbContextAsync();
-        users = await db.Users.Where(u => u.IsActive && u.Role == Role.Admin).OrderBy(u => u.FirstName).ToListAsync();
+        users = await db.Users.Where(u => u.IsActive && !u.IsCloudIdentity && u.Role == Role.Admin).OrderBy(u => u.FirstName).ToListAsync();
     }
 
     private void SelectUser(User u) => selectedUser = u;

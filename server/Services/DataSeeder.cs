@@ -10,6 +10,7 @@ public static class DataSeeder
     {
         db.Database.EnsureCreated();
         EnsureCloudSyncOutboxSchema(db);
+        AddColumnIfMissing(db, "Users", "IsCloudIdentity", "INTEGER NOT NULL DEFAULT 0");
         db.Database.ExecuteSqlRaw(@"CREATE TABLE IF NOT EXISTS RestaurantAppearances (
             Id INTEGER NOT NULL PRIMARY KEY, DisplayName TEXT NOT NULL,
             BackgroundImageDataUri TEXT NULL, ShowOccupiedTableTimer INTEGER NOT NULL DEFAULT 0
@@ -48,6 +49,16 @@ public static class DataSeeder
 
     private static void EnsureCloudSyncOutboxSchema(AppDbContext db)
     {
+        db.Database.ExecuteSqlRaw(@"CREATE TABLE IF NOT EXISTS CloudHostedIdSequences (
+            EntityType TEXT NOT NULL PRIMARY KEY, CurrentId INTEGER NOT NULL
+        );");
+        db.Database.ExecuteSqlRaw(@"CREATE TABLE IF NOT EXISTS CloudSyncInboxEntries (
+            EntityType TEXT NOT NULL, EntityId TEXT NOT NULL, Cursor INTEGER NOT NULL,
+            IsDeleted INTEGER NOT NULL, SchemaVersion INTEGER NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL, PayloadJson TEXT NOT NULL,
+            PRIMARY KEY (EntityType, EntityId)
+        );");
+        db.Database.ExecuteSqlRaw("CREATE INDEX IF NOT EXISTS IX_CloudSyncInboxEntries_Cursor ON CloudSyncInboxEntries (Cursor);");
         // Additive upgrade for installed SQLite databases. Existing POS data is not rewritten.
         db.Database.ExecuteSqlRaw(@"CREATE TABLE IF NOT EXISTS CloudSyncOutboxEvents (
             Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
@@ -298,10 +309,16 @@ public static class DataSeeder
         AddColumnIfMissing(db, "OrderItems", "KitchenPrintUnconfirmed", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing(db, "OrderPrintBatches", "AcceptedLinesJson", "TEXT NULL");
         AddColumnIfMissing(db, "OrderPrintBatches", "AcceptedTableName", "TEXT NULL");
+        AddColumnIfMissing(db, "OrderPrintBatches", "AcceptedOrderComment", "TEXT NULL");
         AddColumnIfMissing(db, "OrderPrintBatches", "DispatchNotificationPending", "INTEGER NOT NULL DEFAULT 0");
+        AddColumnIfMissing(db, "OrderPrintBatches", "WindowsPrintPending", "INTEGER NOT NULL DEFAULT 0");
         AddColumnIfMissing(db, "OrderPrintBatches", "DailyNumber", "INTEGER NOT NULL DEFAULT 0");
 
-        db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS IX_OrderPrintBatches_OrderId_Number
+        // Two writable replicas can submit different batches for one order while
+        // disconnected. Their display sequence numbers can then overlap, so the
+        // row identity (Id) remains authoritative and this index stays non-unique.
+        db.Database.ExecuteSqlRaw("DROP INDEX IF EXISTS IX_OrderPrintBatches_OrderId_Number;");
+        db.Database.ExecuteSqlRaw(@"CREATE INDEX IF NOT EXISTS IX_OrderPrintBatches_OrderId_Number
             ON OrderPrintBatches (OrderId, Number);");
 
         db.Database.ExecuteSqlRaw(@"CREATE TABLE IF NOT EXISTS FiscalOrderCancellations (

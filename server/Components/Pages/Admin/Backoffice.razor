@@ -72,9 +72,9 @@
             <section class="bo-card">
                 <div class="bo-card-title"><div><h2>Συνταγή προϊόντος</h2><p>Η ποσότητα είναι αυτή που αφαιρείται ανά ένα προϊόν. π.χ. Freddo: καφές 0,018 kg και ποτήρι 1 τεμ.</p></div><span>☕</span></div>
                 <div class="bo-recipe-picker"><label>Προϊόν καταλόγου<select value="@selectedMenuItemId" @onchange="ChangeMenuItem"><option value="0">Επίλεξε προϊόν</option>@foreach (var menuItem in menuItems) { <option value="@menuItem.Id">@menuItem.Name · €@menuItem.Price.ToString("N2", greekCulture)</option> }</select></label>
-                    @if (selectedMenuItemId > 0) { <div class="bo-cost-preview"><span>Κόστος υλικών ανά προϊόν</span><strong>€@SelectedRecipeCost().ToString("N3", greekCulture)</strong><small>Αυτόματη αφαίρεση μετά την αποστολή</small></div> }
+                    @if (selectedMenuItemId != 0) { <div class="bo-cost-preview"><span>Κόστος υλικών ανά προϊόν</span><strong>€@SelectedRecipeCost().ToString("N3", greekCulture)</strong><small>Αυτόματη αφαίρεση μετά την αποστολή</small></div> }
                 </div>
-                @if (selectedMenuItemId > 0)
+                @if (selectedMenuItemId != 0)
                 {
                     <div class="bo-recipe-list">
                         @foreach (var row in recipeRows)
@@ -156,7 +156,7 @@
         recipeLines = await db.InventoryRecipeLines.Include(x => x.InventoryItem).ToListAsync();
         recentPurchases = await db.InventoryPurchases.Include(x => x.Supplier).Include(x => x.Lines).ThenInclude(x => x.InventoryItem).OrderByDescending(x => x.PurchasedAt).Take(30).ToListAsync();
         actualCounts = ingredients.ToDictionary(x => x.Id, x => x.QuantityOnHand);
-        if (selectedMenuItemId > 0) recipeRows = recipeLines.Where(x => x.MenuItemId == selectedMenuItemId).Select(x => new RecipeRow { IngredientId = x.InventoryItemId, Quantity = x.QuantityPerProduct }).ToList();
+        if (selectedMenuItemId != 0) recipeRows = recipeLines.Where(x => x.MenuItemId == selectedMenuItemId).Select(x => new RecipeRow { IngredientId = x.InventoryItemId, Quantity = x.QuantityPerProduct }).ToList();
         if (recipeRows.Count == 0) recipeRows.Add(new RecipeRow());
         loading = false;
         await LoadReports();
@@ -179,7 +179,7 @@
     private async Task ReceivePurchase() => await Run(async () => { var auth = await AuthProvider.GetAuthenticationStateAsync(); var userId = int.Parse(auth.User.FindFirst(ClaimTypes.NameIdentifier)!.Value); await Inventory.ReceivePurchaseAsync(purchaseSupplierId == 0 ? null : purchaseSupplierId, purchaseInvoice, purchaseDate, purchaseIngredientId, purchaseQuantity, purchaseUnitCost, userId, purchaseNote); purchaseInvoice = purchaseNote = ""; purchaseQuantity = 1; purchaseUnitCost = 0; await LoadData(); });
     private async Task SaveCount(InventoryItem item) => await Run(async () => { var auth = await AuthProvider.GetAuthenticationStateAsync(); var userId = int.Parse(auth.User.FindFirst(ClaimTypes.NameIdentifier)!.Value); await Inventory.AdjustStockAsync(item.Id, actualCounts.GetValueOrDefault(item.Id), userId, null); await LoadData(); });
     private async Task ChangeMenuItem(ChangeEventArgs args) { selectedMenuItemId = int.TryParse(args.Value?.ToString(), out var id) ? id : 0; using var db = await DbFactory.CreateDbContextAsync(); recipeRows = await db.InventoryRecipeLines.Where(x => x.MenuItemId == selectedMenuItemId).Select(x => new RecipeRow { IngredientId = x.InventoryItemId, Quantity = x.QuantityPerProduct }).ToListAsync(); if (recipeRows.Count == 0) recipeRows.Add(new RecipeRow()); }
-    private async Task SaveRecipe() => await Run(async () => { var rows = recipeRows.Where(x => x.IngredientId > 0 || x.Quantity > 0).Select(x => (x.IngredientId, x.Quantity)).ToArray(); await Inventory.SaveRecipeAsync(selectedMenuItemId, rows); await LoadData(); message = "Η συνταγή αποθηκεύτηκε. Τα υλικά θα αφαιρούνται αυτόματα μετά την αποστολή προϊόντων."; });
+    private async Task SaveRecipe() => await Run(async () => { var rows = recipeRows.Where(x => x.IngredientId != 0 || x.Quantity > 0).Select(x => (x.IngredientId, x.Quantity)).ToArray(); await Inventory.SaveRecipeAsync(selectedMenuItemId, rows); await LoadData(); message = "Η συνταγή αποθηκεύτηκε. Τα υλικά θα αφαιρούνται αυτόματα μετά την αποστολή προϊόντων."; });
     private decimal RecipeCost(int menuItemId) => recipeLines.Where(x => x.MenuItemId == menuItemId).Sum(x => x.QuantityPerProduct * (x.InventoryItem?.UnitCost ?? 0));
     private decimal SelectedRecipeCost() => RecipeCost(selectedMenuItemId);
     private static string UnitName(int code) => code switch { 2 => "κιλά", 3 => "λίτρα", _ => "τεμ." };

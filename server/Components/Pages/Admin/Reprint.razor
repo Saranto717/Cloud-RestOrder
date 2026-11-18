@@ -317,7 +317,7 @@ else
         if (cancellation.PaymentId is int saved) return saved > 0 ? saved : null;
         if (!cancellation.ExternalSystemId.StartsWith("credit-", StringComparison.OrdinalIgnoreCase)) return null;
         var pieces = cancellation.ExternalSystemId.Split('-', StringSplitOptions.RemoveEmptyEntries);
-        return pieces.Length > 2 && int.TryParse(pieces[2], out var id) && id > 0 ? id : null;
+        return pieces.Length > 2 && int.TryParse(pieces[2], out var id) && id != 0 ? id : null;
     }
 
     private static (string Series, long? Number) ResolveSeriesAndNumber(FiscalOrderCancellation cancellation)

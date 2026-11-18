@@ -25,7 +25,7 @@ public sealed class EpayWebEcrService(IHttpClientFactory httpClientFactory, IDbC
     public async Task<SetupResult> RedeemAsync(BankPosTerminalSettings settings, CancellationToken cancellationToken = default)
     {
         if (!CommonWebEcrProviderProfile.SupportsPayment(settings)) return new(false, "Ο επιλεγμένος πάροχος/τρόπος σύνδεσης δεν χρησιμοποιεί το κοινό WebECR REST API.");
-        if (settings.Id <= 0) return new(false, "Αποθήκευσε πρώτα τη ρύθμιση του τερματικού.");
+        if (settings.Id == 0) return new(false, "Αποθήκευσε πρώτα τη ρύθμιση του τερματικού.");
         if (string.IsNullOrWhiteSpace(settings.Endpoint) || string.IsNullOrWhiteSpace(settings.Username) || string.IsNullOrWhiteSpace(settings.Password))
             return new(false, "Συμπλήρωσε Base URL, Username και Password.");
         if (string.IsNullOrWhiteSpace(settings.RedeemCode)) return new(false, "Βάλε τον one-time κωδικό που εμφανίζει το POS.");
@@ -378,7 +378,7 @@ public sealed class EpayWebEcrService(IHttpClientFactory httpClientFactory, IDbC
                 apiKey = redeemed?.Id;
                 if (string.IsNullOrWhiteSpace(apiKey)) return Fail($"Το {CommonWebEcrProviderProfile.ProviderLabel(settings.Provider)} δεν επέστρεψε API key από το redeem.");
                 // The redeem code is one-time. Persist the resulting API key so subsequent payments do not redeem it again.
-                if (settings.Id > 0)
+                if (settings.Id != 0)
                 {
                     using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
                     var saved = await db.BankPosTerminalSettings.FirstOrDefaultAsync(x => x.Id == settings.Id, cancellationToken);

@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '17.3.126'
+    [string]$Version = '17.3.127'
 )
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
