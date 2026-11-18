@@ -17,7 +17,7 @@ public static class CloudWebGateway
     private static readonly HashSet<string> HopByHopHeaders = new(StringComparer.OrdinalIgnoreCase)
     {
         "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "TE", "Trailer",
-        "Transfer-Encoding", "Upgrade", "Host", "Content-Length", "Cookie"
+        "Transfer-Encoding", "Upgrade", "Host", "Content-Length"
     };
 
     public static void MapInternalEndpoints(this WebApplication app, string sharedToken)
@@ -84,16 +84,6 @@ public static class CloudWebGateway
                 return;
             }
 
-            if (context.Request.Path.Equals("/api/logout", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsPost(context.Request.Method))
-            {
-                if (context.Request.Cookies.TryGetValue(SessionCookie, out var sessionToken))
-                    await context.RequestServices.GetRequiredService<CloudPosDatabase>().RevokeSessionAsync(
-                        SHA256.HashData(Encoding.UTF8.GetBytes(sessionToken)), context.RequestAborted);
-                context.Response.Cookies.Delete(SessionCookie, new CookieOptions { Path = "/", Secure = true, HttpOnly = true, SameSite = SameSiteMode.Strict });
-                context.Response.Redirect("/pos.html", permanent: false);
-                return;
-            }
-
             var database = context.RequestServices.GetRequiredService<CloudPosDatabase>();
             var session = await ReadSessionAsync(context, database, refresh: false, context.RequestAborted);
             if (session is null)
@@ -137,6 +127,17 @@ public static class CloudWebGateway
         foreach (var header in context.Request.Headers)
         {
             if (HopByHopHeaders.Contains(header.Key) || header.Key.StartsWith("X-Cloud-", StringComparison.OrdinalIgnoreCase)) continue;
+            if (header.Key.Equals("Cookie", StringComparison.OrdinalIgnoreCase))
+            {
+                // Keep the app's own staff/antiforgery cookies for the full
+                // Windows UI, but never expose the store-session cookie to it.
+                var forwardedCookies = context.Request.Cookies
+                    .Where(cookie => !cookie.Key.Equals(SessionCookie, StringComparison.OrdinalIgnoreCase))
+                    .Select(cookie => $"{cookie.Key}={cookie.Value}");
+                var cookieHeader = string.Join("; ", forwardedCookies);
+                if (cookieHeader.Length > 0) message.Headers.TryAddWithoutValidation("Cookie", cookieHeader);
+                continue;
+            }
             if (!message.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray()))
                 message.Content?.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
         }
@@ -164,6 +165,11 @@ public static class CloudWebGateway
         client.Options.SetRequestHeader("X-Cloud-Email", session.Email);
         client.Options.SetRequestHeader("X-Cloud-Role", session.Role);
         client.Options.SetRequestHeader("X-Cloud-Internal-Token", sharedToken);
+        var forwardedCookies = context.Request.Cookies
+            .Where(cookie => !cookie.Key.Equals(SessionCookie, StringComparison.OrdinalIgnoreCase))
+            .Select(cookie => $"{cookie.Key}={cookie.Value}");
+        var cookieHeader = string.Join("; ", forwardedCookies);
+        if (cookieHeader.Length > 0) client.Options.SetRequestHeader("Cookie", cookieHeader);
         await client.ConnectAsync(targetBuilder.Uri, context.RequestAborted);
         using var browser = await context.WebSockets.AcceptWebSocketAsync(client.SubProtocol);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);

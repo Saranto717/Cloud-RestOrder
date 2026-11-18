@@ -119,13 +119,32 @@ authBuilder.AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options
         options.AccessDeniedPath = "/access-denied";
         options.ExpireTimeSpan = TimeSpan.FromDays(30);
         options.SlidingExpiration = true;
+        if (cloudWebMode)
+        {
+            options.Cookie.Name = "restaurantorders_staff_auth";
+            options.Cookie.HttpOnly = true;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+            options.Cookie.SameSite = SameSiteMode.Strict;
+            options.Events.OnValidatePrincipal = async context =>
+            {
+                var requestStoreId = context.HttpContext.Request.Headers["X-Cloud-Store-Id"].ToString();
+                var cookieStoreId = context.Principal?.FindFirst("cloud_store_id")?.Value;
+                if (Guid.TryParse(requestStoreId, out var requestStore) &&
+                    Guid.TryParse(cookieStoreId, out var cookieStore) && requestStore == cookieStore)
+                    return;
+
+                context.RejectPrincipal();
+                await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            };
+        }
     });
 if (cloudWebMode)
 {
     authBuilder.AddScheme<AuthenticationSchemeOptions, CloudGatewayAuthenticationHandler>("CloudGateway", _ => { });
     authBuilder.AddPolicyScheme("CloudGatewayOrCookie", "Cloud gateway or local account", options =>
-        options.ForwardDefaultSelector = context => context.Request.Headers.ContainsKey("X-Cloud-Store-Id")
-            ? "CloudGateway" : CookieAuthenticationDefaults.AuthenticationScheme);
+        options.ForwardDefaultSelector = context => context.Request.Headers.ContainsKey("X-Cloud-Store-Id") &&
+            !context.Request.Cookies.ContainsKey("restaurantorders_staff_auth")
+                ? "CloudGateway" : CookieAuthenticationDefaults.AuthenticationScheme);
 }
 
 builder.Services.AddAuthorization();
@@ -243,6 +262,12 @@ async Task SignInUser(HttpContext http, User user)
         new(ClaimTypes.Name, user.FullName),
         new(ClaimTypes.Role, user.Role.ToString())
     };
+    if (cloudWebMode)
+    {
+        if (!Guid.TryParse(http.Request.Headers["X-Cloud-Store-Id"], out var storeId))
+            throw new InvalidOperationException("Η συνεδρία καταστήματος δεν είναι έγκυρη.");
+        claims.Add(new Claim("cloud_store_id", storeId.ToString("D")));
+    }
     var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
     await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
 }

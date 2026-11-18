@@ -12,36 +12,6 @@ window.restaurantOrders.downloadBase64 = function (fileName, contentType, base64
     link.click();
     URL.revokeObjectURL(url);
 };
-window.restaurantOrders.cloudPosUsers = {
-    async list() {
-        return await cloudPosUserRequest('/api/pos/v1/users');
-    },
-    async create(user) {
-        return await cloudPosUserRequest('/api/pos/v1/users', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(user)
-        });
-    },
-    async deactivate(userId) {
-        return await cloudPosUserRequest(`/api/pos/v1/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
-    }
-};
-
-async function cloudPosUserRequest(url, options = {}) {
-    const response = await fetch(url, { credentials: 'same-origin', ...options });
-    if (!response.ok) {
-        let detail = '';
-        try {
-            const payload = await response.json();
-            detail = payload.error || payload.title || '';
-        } catch { }
-        throw new Error(detail || `Αίτημα Cloud POS (${response.status}).`);
-    }
-    if (response.status === 204) return null;
-    return await response.json();
-}
-
 window.restaurantOrders.scrollOrderItemIntoView = function (elementId) {
     let attempts = 0;
     const reveal = function () {

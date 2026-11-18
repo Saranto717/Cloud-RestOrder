@@ -189,7 +189,9 @@ public sealed class CloudGatewayAuthenticationHandler(
         {
             new(ClaimTypes.NameIdentifier, user.Id.ToString(CultureInfo.InvariantCulture)),
             new(ClaimTypes.Name, string.IsNullOrWhiteSpace(email) ? user.FullName : email),
-            new(ClaimTypes.Role, cloudRole.ToString()),
+            // The cloud account only opens the store's application shell. Staff
+            // permissions come from the same user/PIN flow as the Windows app.
+            new(ClaimTypes.Role, "Store"),
             new("cloud_store_id", parsedStore.ToString("D")),
             new("cloud_user_id", parsedUser.ToString(CultureInfo.InvariantCulture)),
             new(ClaimTypes.Email, email)

@@ -3,6 +3,7 @@
 @rendermode InteractiveServer
 @inject NavigationManager Nav
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject IConfiguration Configuration
 
 @if (isAuthenticated)
 {
@@ -63,11 +64,17 @@ else
 
         if (user is not null && (user.Identity?.IsAuthenticated ?? false))
         {
-            isAuthenticated = true;
-            if (user.IsInRole("Admin"))
-                Nav.NavigateTo("/admin/tables", forceLoad: true);
-            else
-                Nav.NavigateTo("/waiter", forceLoad: true);
+            // A cloud store session opens the same welcome flow as a fresh
+            // local launch. Staff then select their own user/PIN in the app.
+            var storeSession = Configuration.GetValue<bool>("CloudWeb:Enabled") && user.IsInRole("Store");
+            if (!storeSession)
+            {
+                isAuthenticated = true;
+                if (user.IsInRole("Admin"))
+                    Nav.NavigateTo("/admin/tables", forceLoad: true);
+                else
+                    Nav.NavigateTo("/waiter", forceLoad: true);
+            }
         }
     }
 }
