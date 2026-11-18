@@ -42,10 +42,16 @@
                     <a href="/admin/issued-documents" data-testid="nav-issued-documents">Εκδοθείσες Αποδείξεις</a>
                     <a href="/admin/parochos-history">Ιστορικό Parochos</a>
                     <a href="/admin/reprint">Επανεκτύπωση</a>
-                    <a href="/admin/backups">Backup / Επαναφορά</a>
-                    <a href="/admin/cloud-sync">Σύνδεση Cloud</a>
+                    @if (!Configuration.GetValue<bool>("CloudWeb:Enabled"))
+                    {
+                        <a href="/admin/backups">Backup / Επαναφορά</a>
+                        <a href="/admin/cloud-sync">Σύνδεση Cloud</a>
+                    }
                     <a href="/admin/users">Χρήστες</a>
-                    <a href="/license">Άδεια χρήσης</a>
+                    @if (!Configuration.GetValue<bool>("CloudWeb:Enabled"))
+                    {
+                        <a href="/license">Άδεια χρήσης</a>
+                    }
                 </AuthorizeView>
 
                 </div>

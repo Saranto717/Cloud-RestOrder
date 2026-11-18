@@ -1,9 +1,19 @@
 @page "/admin/backups"
 @attribute [Authorize(Roles = "Admin")]
 @rendermode InteractiveServer
-@inject DatabaseBackupService BackupManager
+@inject IConfiguration Configuration
+@inject IServiceProvider Services
 @inject IJSRuntime JS
 
+@if (Configuration.GetValue<bool>("CloudWeb:Enabled"))
+{
+    <section class="admin-form">
+        <h2>Αντίγραφα ασφαλείας</h2>
+        <p class="hint">Τα δεδομένα αποθηκεύονται σε ξεχωριστό, μόνιμο χώρο για κάθε κατάστημα στο cloud. Η δημιουργία και επαναφορά αντιγράφων της cloud βάσης γίνεται από τον διαχειριστή του server.</p>
+    </section>
+}
+else
+{
 <h2>Αντίγραφα ασφαλείας</h2>
 <p class="hint">Δημιουργείται αυτόματα ένα αντίγραφο κάθε ημέρα στις 03:00. Κρατούνται τα 30 πιο πρόσφατα αυτόματα αντίγραφα.</p>
 
@@ -48,14 +58,19 @@ else
         </tbody>
     </table>
 }
+}
 
 @code {
+    private DatabaseBackupService BackupManager => Services.GetRequiredService<DatabaseBackupService>();
     private IReadOnlyList<DatabaseBackupInfo> backups = Array.Empty<DatabaseBackupInfo>();
     private bool busy;
     private bool messageIsError;
     private string? message;
 
-    protected override void OnInitialized() => Refresh();
+    protected override void OnInitialized()
+    {
+        if (!Configuration.GetValue<bool>("CloudWeb:Enabled")) Refresh();
+    }
 
     private void Refresh() => backups = BackupManager.GetBackups();
 

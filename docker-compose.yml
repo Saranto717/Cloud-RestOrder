@@ -50,6 +50,9 @@ services:
       Cloud__LicenseManagerEmail: ${LICENSE_MANAGER_EMAIL:?Set LICENSE_MANAGER_EMAIL in Dockhand}
       Cloud__LicenseManagerPasswordFile: /run/secrets/license_manager_password
       Cloud__LicenseSigningPrivateKeyFile: /var/lib/restaurantorders/license-signing-private.pem
+      Cloud__WebSyncTokenFile: /run/secrets/cloud_web_sync_token
+      CloudWeb__Enabled: "true"
+      Cloud__WebUpstream: http://cloud-web:8080
       Cloud__TrustedProxyAddresses: ${CLOUD_TRUSTED_PROXY_ADDRESSES:-}
     secrets:
       - source: cloud_app_password
@@ -59,6 +62,11 @@ services:
         mode: 0400
       - source: license_manager_password
         target: license_manager_password
+        uid: "1654"
+        gid: "1654"
+        mode: 0400
+      - source: cloud_web_sync_token
+        target: cloud_web_sync_token
         uid: "1654"
         gid: "1654"
         mode: 0400
@@ -73,6 +81,31 @@ services:
       - database
       - api-egress
 
+  cloud-web:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-saranto717}/cloud-restorder-web:${CLOUD_IMAGE_TAG:-latest}
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_HTTP_PORTS: "8080"
+      CloudWeb__Enabled: "true"
+      CloudWeb__DataDirectory: /var/lib/restaurantorders/cloud-web
+      CloudWeb__SyncBaseUrl: http://cloud-api:8080/
+      CloudWeb__SyncTokenFile: /run/secrets/cloud_web_sync_token
+    secrets:
+      - source: cloud_web_sync_token
+        target: cloud_web_sync_token
+        uid: "1654"
+        gid: "1654"
+        mode: 0400
+    volumes:
+      - cloud-web-data:/var/lib/restaurantorders/cloud-web
+    depends_on:
+      cloud-api:
+        condition: service_started
+    networks:
+      - api-egress
+
 networks:
   database:
     internal: true
@@ -81,6 +114,7 @@ networks:
 volumes:
   postgres-data:
   license-signing-data:
+  cloud-web-data:
 
 secrets:
   postgres_admin_password:
@@ -89,3 +123,5 @@ secrets:
     environment: CLOUD_APP_PASSWORD_SECRET
   license_manager_password:
     environment: LICENSE_MANAGER_PASSWORD_SECRET
+  cloud_web_sync_token:
+    environment: CLOUD_WEB_SYNC_TOKEN_SECRET

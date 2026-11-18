@@ -178,8 +178,9 @@ async function loadUsers() {
 byId('login-form').addEventListener('submit', async event => {
   event.preventDefault(); const form = new FormData(event.currentTarget); const button = event.currentTarget.querySelector('button'); button.disabled = true;
   try {
-    const user = await api('/api/auth/login', 'POST', { email: form.get('email'), password: form.get('password') });
-    byId('login-error').hidden = true; showPos(user); await refreshBootstrap();
+    await api('/api/auth/login', 'POST', { email: form.get('email'), password: form.get('password') });
+    byId('login-error').hidden = true;
+    window.location.replace('/');
   } catch (error) { byId('login-error').textContent = error.message; byId('login-error').hidden = false; }
   finally { button.disabled = false; }
 });

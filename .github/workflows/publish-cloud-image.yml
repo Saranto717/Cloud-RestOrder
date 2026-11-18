@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   publish:
-    name: Build and publish cloud API
+    name: Build and publish cloud API and full POS web app
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
@@ -46,6 +46,7 @@ jobs:
         shell: bash
         run: |
           echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cloud-restorder" >> "$GITHUB_OUTPUT"
+          echo "image_owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
           else
@@ -86,6 +87,31 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Create full POS web image tags
+        id: metadata-web
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.metadata-values.outputs.image_owner }}/cloud-restorder-web
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+
+      - name: Build and publish full POS web app
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./server/Dockerfile.cloud
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.metadata-web.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.title=RestaurantOrders Full Cloud POS
+          cache-from: type=gha,scope=cloud-web
+          cache-to: type=gha,scope=cloud-web,mode=max
 
   create-release:
     name: Create GitHub Release

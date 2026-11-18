@@ -23,6 +23,7 @@ public sealed class CloudSyncOutboxWorker(
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
+    private const int MaxSyncBatchBytes = 4 * 1024 * 1024;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -121,18 +122,28 @@ public sealed class CloudSyncOutboxWorker(
         await using (var db = await dbFactory.CreateDbContextAsync(cancellationToken))
         {
             batch = await db.CloudSyncOutboxEvents.Where(item => item.AcknowledgedAtUtc == null)
-                .OrderBy(item => item.Id).Take(10).ToListAsync(cancellationToken);
+                .OrderBy(item => item.Id).Take(100).ToListAsync(cancellationToken);
         }
         if (batch.Count == 0) return;
 
         var events = new List<CloudSyncPushEvent>(batch.Count);
+        var body = JsonSerializer.SerializeToUtf8Bytes(new CloudSyncPushBatch(events), JsonOptions);
         foreach (var item in batch)
         {
             using var payload = JsonDocument.Parse(item.PayloadJson);
-            events.Add(new CloudSyncPushEvent(item.EventId, item.EntityType, item.EntityId,
-                item.EventType, item.SchemaVersion, item.OccurredAtUtc, payload.RootElement.Clone()));
+            var candidate = new CloudSyncPushEvent(item.EventId, item.EntityType, item.EntityId,
+                item.EventType, item.SchemaVersion, item.OccurredAtUtc, payload.RootElement.Clone());
+            var candidateEvents = events.Append(candidate).ToArray();
+            var candidateBody = JsonSerializer.SerializeToUtf8Bytes(new CloudSyncPushBatch(candidateEvents), JsonOptions);
+            if (candidateBody.Length > MaxSyncBatchBytes)
+            {
+                if (events.Count == 0)
+                    throw new InvalidDataException("Μία εγγραφή cloud sync ξεπερνά το όριο των 4 MB.");
+                break;
+            }
+            events.Add(candidate);
+            body = candidateBody;
         }
-        var body = JsonSerializer.SerializeToUtf8Bytes(new CloudSyncPushBatch(events), JsonOptions);
         var endpoint = new Uri(baseUri, "api/sync/v1/events");
         using var request = CloudSyncRequestSigner.Create(HttpMethod.Post, endpoint, installationId, deviceSecret, body);
         using var response = await CreateClient().SendAsync(request, cancellationToken);
@@ -141,10 +152,10 @@ public sealed class CloudSyncOutboxWorker(
             throw new InvalidOperationException($"Αποστολή αλλαγών στο cloud: HTTP {(int)response.StatusCode}: {ShortDetail(responseText)}");
 
         var acknowledgement = JsonSerializer.Deserialize<CloudSyncPushAcknowledgement>(responseText, JsonOptions);
-        if (acknowledgement is null || acknowledgement.Accepted + acknowledgement.Duplicates != batch.Count)
+        if (acknowledgement is null || acknowledgement.Accepted + acknowledgement.Duplicates != events.Count)
             throw new InvalidDataException("Το cloud δεν επιβεβαίωσε όλα τα συμβάντα.");
 
-        var eventIds = batch.Select(item => item.EventId).ToHashSet();
+        var eventIds = events.Select(item => item.EventId).ToHashSet();
         await using var updateDb = await dbFactory.CreateDbContextAsync(cancellationToken);
         var pending = await updateDb.CloudSyncOutboxEvents
             .Where(item => eventIds.Contains(item.EventId) && item.AcknowledgedAtUtc == null)
@@ -186,47 +197,42 @@ public sealed class CloudSyncOutboxWorker(
 
     private async Task ApplyCloudEntitiesAsync(IReadOnlyList<CloudSyncEntity> entities, CancellationToken cancellationToken)
     {
-        var incoming = entities.Where(entity => !entity.IsDeleted && int.TryParse(entity.EntityId, NumberStyles.Integer,
-                CultureInfo.InvariantCulture, out var id) && id < 0 &&
-            entity.EntityType is nameof(Order) or nameof(OrderItem)).ToList();
-        if (incoming.Count == 0) return;
+        if (entities.Count == 0) return;
 
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         db.SuppressCloudSyncCapture = true;
-        var localWaiterId = await db.Users.Where(user => user.IsActive).OrderBy(user => user.Id)
-            .Select(user => user.Id).FirstOrDefaultAsync(cancellationToken);
-        if (localWaiterId <= 0)
-            throw new InvalidOperationException("Δεν βρέθηκε ενεργός χρήστης στο Windows POS για τις παραγγελίες tablet.");
-
-        foreach (var entity in incoming.OrderBy(item => item.Cursor))
+        foreach (var entity in entities.OrderBy(item => item.Cursor))
         {
-            var id = int.Parse(entity.EntityId, CultureInfo.InvariantCulture);
-            if (entity.EntityType == nameof(Order))
+            var type = db.Model.GetEntityTypes().Select(item => item.ClrType).FirstOrDefault(item => item.Name == entity.EntityType);
+            if (type is null || !CloudSyncEntityPolicy.TryGetProperties(type, out var allowed)) continue;
+            var entityType = db.Model.FindEntityType(type);
+            var key = entityType?.FindPrimaryKey()?.Properties.SingleOrDefault();
+            if (key is null) continue;
+            object keyValue;
+            try { keyValue = Convert.ChangeType(entity.EntityId, Nullable.GetUnderlyingType(key.ClrType) ?? key.ClrType, CultureInfo.InvariantCulture); }
+            catch { continue; }
+
+            var existing = await db.FindAsync(type, [keyValue], cancellationToken);
+            if (entity.IsDeleted)
             {
-                if (await db.Orders.AnyAsync(order => order.Id == id, cancellationToken)) continue;
-                var order = JsonSerializer.Deserialize<Order>(entity.Payload.GetRawText(), JsonOptions)
-                    ?? throw new InvalidDataException("Το cloud έστειλε μη έγκυρη παραγγελία.");
-                if (!await db.Tables.AnyAsync(table => table.Id == order.RestaurantTableId, cancellationToken))
-                    throw new InvalidDataException($"Δεν υπάρχει τοπικά το τραπέζι {order.RestaurantTableId} που επιλέχθηκε στο tablet.");
-                order.Id = id;
-                order.WaiterUserId = localWaiterId;
-                order.Status = OrderStatus.Open;
-                db.Orders.Add(order);
+                if (existing is not null) db.Remove(existing);
+                await db.SaveChangesAsync(cancellationToken);
+                continue;
             }
-            else if (entity.EntityType == nameof(OrderItem))
+
+            var incoming = JsonSerializer.Deserialize(entity.Payload.GetRawText(), type, JsonOptions);
+            if (incoming is null) continue;
+            if (existing is null)
             {
-                if (await db.OrderItems.AnyAsync(item => item.Id == id, cancellationToken)) continue;
-                var item = JsonSerializer.Deserialize<OrderItem>(entity.Payload.GetRawText(), JsonOptions)
-                    ?? throw new InvalidDataException("Το cloud έστειλε μη έγκυρη γραμμή παραγγελίας.");
-                if (!await db.Orders.AnyAsync(order => order.Id == item.OrderId, cancellationToken))
-                    throw new InvalidDataException($"Δεν έχει ληφθεί πρώτα η παραγγελία {item.OrderId} από το tablet.");
-                if (!await db.MenuItems.AnyAsync(menu => menu.Id == item.MenuItemId, cancellationToken))
-                    throw new InvalidDataException($"Δεν υπάρχει τοπικά το είδος με κωδικό {item.MenuItemId} που επιλέχθηκε στο tablet.");
-                item.Id = id;
-                item.IsPrinted = false;
-                item.PrintedAt = null;
-                item.KitchenPrintUnconfirmed = false;
-                db.OrderItems.Add(item);
+                db.Entry(incoming).Property(key.Name).CurrentValue = keyValue;
+                db.Add(incoming);
+            }
+            else
+            {
+                var source = db.Entry(incoming);
+                var target = db.Entry(existing);
+                foreach (var property in allowed)
+                    target.Property(property).CurrentValue = source.Property(property).CurrentValue;
             }
             await db.SaveChangesAsync(cancellationToken);
         }

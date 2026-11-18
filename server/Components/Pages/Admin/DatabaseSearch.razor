@@ -4,14 +4,22 @@
 @using System.Security.Claims
 @using System.Text
 @using System.Text.Json
+@inject IConfiguration Configuration
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject DatabaseExplorerService Explorer
-@inject DatabaseBackupService Backups
+@inject IServiceProvider Services
 @inject AuthenticationStateProvider AuthProvider
 @inject IJSRuntime JS
 
 <h2>Αναζήτηση και επεξεργασία βάσης</h2>
-<p class="hint">Αναζήτησε σε όλους τους πίνακες ή επίλεξε συγκεκριμένο πίνακα. Μπορείς να αλλάξεις τιμές και να εξαγάγεις τα αποτελέσματα σε JSON ή CSV. Οι κωδικοί εισόδου δεν ανακτώνται· στους χρήστες εμφανίζεται μόνο αν έχει οριστεί κωδικός. Για αλλαγή, χρησιμοποίησε Χρήστες → Ορισμός. Τα μυστικά κλειδιά δεν εμφανίζονται.</p>
+@if (Configuration.GetValue<bool>("CloudWeb:Enabled"))
+{
+    <p class="hint">Αναζήτησε και επεξεργάσου τα δεδομένα του καταστήματος. Τα μυστικά κλειδιά και οι κωδικοί δεν εμφανίζονται. Οι αλλαγές συγχρονίζονται με τις υπόλοιπες εγκαταστάσεις του καταστήματος.</p>
+}
+else
+{
+    <p class="hint">Αναζήτησε σε όλους τους πίνακες ή επίλεξε συγκεκριμένο πίνακα. Μπορείς να αλλάξεις τιμές και να εξαγάγεις τα αποτελέσματα σε JSON ή CSV. Οι κωδικοί εισόδου δεν ανακτώνται· στους χρήστες εμφανίζεται μόνο αν έχει οριστεί κωδικός. Για αλλαγή, χρησιμοποίησε Χρήστες → Ορισμός. Τα μυστικά κλειδιά δεν εμφανίζονται.</p>
+}
 
 <section class="database-sql-panel" aria-busy="@sqlBusy">
     <h3>SQL αναζήτηση (μόνο ανάγνωση)</h3>
@@ -277,8 +285,12 @@ else if (searched && string.IsNullOrWhiteSpace(message))
         var code = adminCodes.GetValueOrDefault(token, "").Trim();
         var changed = row.Cells.Where(c => c.Editable && !string.Equals(c.Value ?? "", c.OriginalValue ?? "", StringComparison.Ordinal)).ToList();
         if (changed.Count == 0) { message = "Δεν υπάρχουν αλλαγές στη συγκεκριμένη εγγραφή."; isError = false; return; }
-        if (string.IsNullOrWhiteSpace(code)) { message = "Πληκτρολόγησε τον κωδικό του συνδεδεμένου διαχειριστή."; isError = true; return; }
-        if (!await JS.InvokeAsync<bool>("confirm", $"Να αποθηκευτούν {changed.Count} αλλαγές στον πίνακα {row.TableName} ({row.KeyLabel})? Θα δημιουργηθεί αντίγραφο ασφαλείας πριν την αλλαγή.")) return;
+        var cloudWebMode = Configuration.GetValue<bool>("CloudWeb:Enabled");
+        if (!cloudWebMode && string.IsNullOrWhiteSpace(code)) { message = "Πληκτρολόγησε τον κωδικό του συνδεδεμένου διαχειριστή."; isError = true; return; }
+        var confirmation = cloudWebMode
+            ? $"Να αποθηκευτούν {changed.Count} αλλαγές στον πίνακα {row.TableName} ({row.KeyLabel})?"
+            : $"Να αποθηκευτούν {changed.Count} αλλαγές στον πίνακα {row.TableName} ({row.KeyLabel})? Θα δημιουργηθεί αντίγραφο ασφαλείας πριν την αλλαγή.";
+        if (!await JS.InvokeAsync<bool>("confirm", confirmation)) return;
 
         busy = true; savingToken = token; message = null; isError = false;
         try
@@ -288,16 +300,19 @@ else if (searched && string.IsNullOrWhiteSpace(message))
                 throw new InvalidOperationException("Δεν βρέθηκε ο συνδεδεμένος λογαριασμός διαχειριστή.");
             using var db = await DbFactory.CreateDbContextAsync();
             var admin = await db.Users.FirstOrDefaultAsync(u => u.Id == userId && u.IsActive && u.Role == Role.Admin);
-            if (admin?.CodeHash is null || !PasswordHasher.Verify(code, admin.CodeHash))
+            if (!cloudWebMode && (admin?.CodeHash is null || !PasswordHasher.Verify(code, admin.CodeHash)))
                 throw new InvalidOperationException("Ο κωδικός διαχειριστή δεν είναι σωστός ή δεν έχει οριστεί. Όρισε πρώτα κωδικό από τη διαχείριση χρηστών.");
 
-            var backup = await Backups.CreateBackupAsync("pre-edit");
+            var backups = cloudWebMode ? null : Services.GetService<DatabaseBackupService>();
+            var backup = backups is null ? null : await backups.CreateBackupAsync("pre-edit");
             var values = row.Cells.Where(c => c.Editable).ToDictionary(c => c.Name, c => c.Value, StringComparer.OrdinalIgnoreCase);
             await Explorer.SaveRowAsync(row.TableName, row.KeyJson, row.OriginalJson, values, userId);
             adminCodes[token] = "";
             rows = await Explorer.SearchAsync(selectedTable, searchText.Trim(), offset);
             hasMore = selectedTable != "*" && rows.Count >= 50;
-            message = $"Οι αλλαγές αποθηκεύτηκαν. Αντίγραφο ασφαλείας: {backup.FileName}.";
+            message = backup is null
+                ? "Οι αλλαγές αποθηκεύτηκαν και μπήκαν στην ουρά συγχρονισμού."
+                : $"Οι αλλαγές αποθηκεύτηκαν. Αντίγραφο ασφαλείας: {backup.FileName}.";
         }
         catch (Exception ex) { message = "Δεν αποθηκεύτηκε η αλλαγή: " + ex.Message; isError = true; }
         finally { busy = false; savingToken = null; }

@@ -295,6 +295,25 @@ public sealed class CloudDatabase(NpgsqlDataSource dataSource)
 
         return entities;
     }
+
+    public async Task<IReadOnlyList<Guid>> ReadActiveStoreIdsAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("""
+            SELECT s.id
+            FROM cloud_stores s
+            LEFT JOIN cloud_licenses l ON l.id=s.license_id
+            LEFT JOIN cloud_license_customers c ON c.id=l.customer_id
+            WHERE s.is_active=TRUE
+              AND (s.license_id IS NULL OR (l.status='active' AND c.is_active=TRUE
+                   AND (l.expires_at_utc IS NULL OR l.expires_at_utc>now())))
+            ORDER BY s.created_at_utc,s.id
+            """, connection);
+        var stores = new List<Guid>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) stores.Add(reader.GetGuid(0));
+        return stores;
+    }
 }
 
 public sealed class SyncEventConflictException(Guid eventId)

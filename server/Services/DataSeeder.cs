@@ -6,7 +6,7 @@ namespace RestaurantOrders.Services;
 
 public static class DataSeeder
 {
-    public static void Seed(AppDbContext db)
+    public static void Seed(AppDbContext db, bool createDefaultAdmin = true)
     {
         db.Database.EnsureCreated();
         EnsureCloudSyncOutboxSchema(db);
@@ -33,7 +33,7 @@ public static class DataSeeder
         AddColumnIfMissing(db, "DayCloses", "EmployeeSummaryJson", "TEXT NULL");
         AddColumnIfMissing(db, "OrderItems", "DiscountPercent", "TEXT NOT NULL DEFAULT '0'");
 
-        if (!db.Users.Any())
+        if (createDefaultAdmin && !db.Users.Any())
         {
             db.Users.Add(new User
             {
@@ -67,8 +67,10 @@ public static class DataSeeder
         db.Database.ExecuteSqlRaw("CREATE INDEX IF NOT EXISTS IX_CloudSyncOutboxEvents_AcknowledgedAtUtc_Id ON CloudSyncOutboxEvents(AcknowledgedAtUtc, Id);");
         db.Database.ExecuteSqlRaw(@"CREATE TABLE IF NOT EXISTS CloudSyncSnapshotStates (
             Id INTEGER NOT NULL PRIMARY KEY CHECK (Id = 1),
-            CompletedAtUtc TEXT NULL
+            CompletedAtUtc TEXT NULL,
+            SnapshotVersion INTEGER NOT NULL DEFAULT 0
         );");
+        AddColumnIfMissing(db, "CloudSyncSnapshotStates", "SnapshotVersion", "INTEGER NOT NULL DEFAULT 0");
         db.Database.ExecuteSqlRaw(@"CREATE TABLE IF NOT EXISTS CloudSyncSettings (
             Id INTEGER NOT NULL PRIMARY KEY CHECK (Id = 1),
             Enabled INTEGER NOT NULL DEFAULT 0,

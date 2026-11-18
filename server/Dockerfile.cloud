@@ -1,0 +1,23 @@
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+
+COPY server/RestaurantOrders.csproj server/
+RUN dotnet restore server/RestaurantOrders.csproj
+
+COPY server/ server/
+RUN dotnet publish server/RestaurantOrders.csproj \
+    --configuration Release \
+    --output /out \
+    --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+WORKDIR /app
+ENV ASPNETCORE_HTTP_PORTS=8080 \
+    CloudWeb__Enabled=true \
+    CloudWeb__DataDirectory=/var/lib/restaurantorders/cloud-web
+EXPOSE 8080
+COPY --from=build /out ./
+RUN mkdir -p /var/lib/restaurantorders/cloud-web \
+    && chown -R $APP_UID:$APP_UID /var/lib/restaurantorders
+USER $APP_UID
+ENTRYPOINT ["dotnet", "RestaurantOrders.dll"]

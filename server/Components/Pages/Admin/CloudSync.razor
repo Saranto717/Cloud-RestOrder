@@ -2,12 +2,23 @@
 @attribute [Authorize(Roles = "Admin")]
 @rendermode InteractiveServer
 @implements IDisposable
+@inject IConfiguration Configuration
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject CloudSyncCredentialProtector CredentialProtector
 @inject CloudSyncRuntimeState RuntimeState
 
 <PageTitle>Σύνδεση Cloud</PageTitle>
 
+@if (Configuration.GetValue<bool>("CloudWeb:Enabled"))
+{
+    <section class="admin-form">
+        <h2>Cloud POS</h2>
+        <p>Αυτή είναι η cloud έκδοση της εφαρμογής. Η σύνδεση του καταστήματος και ο συγχρονισμός με το Windows POS ρυθμίζονται από το τοπικό πρόγραμμα, στην επιλογή «Σύνδεση Cloud».</p>
+        <p>Οι χρήστες, τα τραπέζια, ο κατάλογος, οι παραγγελίες και τα υπόλοιπα στοιχεία αυτής της εγκατάστασης αποθηκεύονται στον ξεχωριστό χώρο του καταστήματος.</p>
+    </section>
+}
+else
+{
 <div class="cloud-sync-page">
     <div class="cloud-sync-heading">
         <div>
@@ -72,6 +83,7 @@
         <p>Αν πέσει το Internet, οι παραγγελίες του Windows POS συνεχίζουν τοπικά. Τα tablet χρειάζονται σύνδεση για να πάρουν ή να στείλουν νέες παραγγελίες. Όταν επανέλθει το δίκτυο, οι αλλαγές Windows αποστέλλονται και οι παραγγελίες tablet περνούν στην τοπική βάση και στους εκτυπωτές.</p>
     </section>
 </div>
+}
 
 <style>
     .cloud-sync-page{max-width:1180px;margin:28px auto;padding:0 22px 40px;color:#17243d}
@@ -111,6 +123,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        if (Configuration.GetValue<bool>("CloudWeb:Enabled")) return;
         await LoadAsync();
         refreshCancellation = new CancellationTokenSource();
         refreshTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));

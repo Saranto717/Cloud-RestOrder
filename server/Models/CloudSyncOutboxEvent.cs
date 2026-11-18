@@ -22,4 +22,5 @@ public sealed class CloudSyncSnapshotState
 {
     public int Id { get; set; } = 1;
     public DateTimeOffset? CompletedAtUtc { get; set; }
+    public int SnapshotVersion { get; set; }
 }

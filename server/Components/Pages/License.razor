@@ -2,6 +2,7 @@
 @implements IAsyncDisposable
 @attribute [AllowAnonymous]
 @rendermode InteractiveServer
+@inject IConfiguration Configuration
 @inject LicenseService LicenseService
 @inject RemoteLicenseClient RemoteLicenseClient
 @inject NavigationManager Navigation
@@ -9,6 +10,24 @@
 
 <PageTitle>Άδεια χρήσης</PageTitle>
 
+@if (Configuration.GetValue<bool>("CloudWeb:Enabled"))
+{
+    <main class="license-page">
+        <section class="license-card">
+            <header class="license-header">
+                <span class="license-icon" aria-hidden="true">🔐</span>
+                <div>
+                    <div class="license-eyebrow">RESTAURANT ORDERS</div>
+                    <h1>Cloud POS</h1>
+                    <p>Η άδεια του καταστήματος διαχειρίζεται από τον Cloud License Manager.</p>
+                </div>
+            </header>
+            <a class="primary license-activate license-home" href="/">Άνοιγμα εφαρμογής</a>
+        </section>
+    </main>
+}
+else
+{
 <main class="license-page">
     <section class="license-card">
         <header class="license-header">
@@ -65,6 +84,7 @@
         }
     </section>
 </main>
+}
 
 @code {
     private LicenseStatus status = new(false, "", "", "", null, null, null);
@@ -75,6 +95,7 @@
 
     protected override void OnInitialized()
     {
+        if (Configuration.GetValue<bool>("CloudWeb:Enabled")) return;
         status = LicenseService.GetStatus();
         if (!status.IsLicensed)
             _ = WatchForAutomaticActivationAsync(watchCancellation.Token);

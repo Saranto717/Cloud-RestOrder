@@ -11,6 +11,13 @@ using RestaurantOrders.Cloud.Api;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 5 * 1024 * 1024);
+var cloudWebEnabled = builder.Configuration.GetValue<bool>("CloudWeb:Enabled");
+var cloudWebSyncToken = cloudWebEnabled
+    ? ReadConfiguredSecret(builder.Configuration, "Cloud:WebSyncToken", "Cloud:WebSyncTokenFile")
+    : null;
+if (cloudWebSyncToken is not null && Encoding.UTF8.GetByteCount(cloudWebSyncToken) < 32)
+    throw new InvalidOperationException("Cloud web sync token must contain at least 32 bytes of secret material.");
+var cloudWebUpstream = builder.Configuration["Cloud:WebUpstream"] ?? "http://cloud-web:8080";
 
 var connectionString = builder.Configuration.GetConnectionString("Cloud");
 if (string.IsNullOrWhiteSpace(connectionString))
@@ -61,6 +68,7 @@ builder.Services.AddSingleton<CloudSyncDeviceDatabase>();
 builder.Services.AddSingleton<CloudLicenseDatabase>();
 builder.Services.AddSingleton<CloudLicenseManagerDatabase>();
 builder.Services.AddSingleton(new LicenseSigner(licenseSigningPrivateKey));
+builder.Services.AddHttpClient("cloud-web-proxy", client => client.Timeout = Timeout.InfiniteTimeSpan);
 
 var app = builder.Build();
 var forwardedOptions = new ForwardedHeadersOptions
@@ -79,6 +87,8 @@ app.UseForwardedHeaders(forwardedOptions);
 app.UseRouting();
 app.UseRateLimiter();
 app.UseStaticFiles();
+if (cloudWebEnabled)
+    app.UseCloudWebProxy(cloudWebUpstream, cloudWebSyncToken!);
 
 await using (var scope = app.Services.CreateAsyncScope())
 {
@@ -598,6 +608,8 @@ app.MapPost("/api/sync/v1/events", async (
 });
 
 app.MapCloudPosEndpoints();
+if (cloudWebEnabled)
+    app.MapInternalEndpoints(cloudWebSyncToken!);
 
 app.Run();
 
@@ -711,8 +723,8 @@ static string? ValidateEvents(IReadOnlyList<SyncEventRequest?> events)
             return "Το OccurredAtUtc πρέπει να αποστέλλεται σε UTC.";
         if (item.Payload.ValueKind != JsonValueKind.Object)
             return "Το Payload κάθε συμβάντος πρέπει να είναι αντικείμενο JSON.";
-        if (JsonSerializer.SerializeToUtf8Bytes(item.Payload).Length > 256 * 1024)
-            return "Το Payload ενός συμβάντος δεν μπορεί να ξεπερνά τα 256 KB.";
+        if (JsonSerializer.SerializeToUtf8Bytes(item.Payload).Length > 3 * 1024 * 1024)
+            return "Το Payload ενός συμβάντος δεν μπορεί να ξεπερνά τα 3 MB.";
     }
 
     return null;

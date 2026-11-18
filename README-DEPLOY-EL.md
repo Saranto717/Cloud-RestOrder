@@ -12,7 +12,7 @@
 - **Compose file:** `docker-compose.yml`
 - **Scheduled sync:** ενεργό, κάθε 5 λεπτά
 
-Το νέο stack χρησιμοποιεί το image `ghcr.io/saranto717/cloud-restorder:latest`. Το Compose έχει `pull_policy: always`. Το `postgres-data` και το `license-signing-data` θα δημιουργηθούν με πρόθεμα `cloud-restorder_`, χωριστά από τα volumes του παλιού stack.
+Το νέο stack χρησιμοποιεί τα images `ghcr.io/saranto717/cloud-restorder:latest` (API) και `ghcr.io/saranto717/cloud-restorder-web:latest` (πλήρης εφαρμογή POS). Το Compose έχει `pull_policy: always`. Τα δεδομένα του cloud POS αποθηκεύονται ανά κατάστημα στο `cloud-web-data`, χωριστά από τα volumes του παλιού stack.
 
 ## 2. Μεταβλητές περιβάλλοντος
 
@@ -24,12 +24,19 @@
 | `LICENSE_MANAGER_PASSWORD_SECRET` | Ισχυρός, μοναδικός κωδικός διαχειριστή, τουλάχιστον 32 χαρακτήρες. |
 | `POSTGRES_ADMIN_PASSWORD_SECRET` | Διαφορετικός τυχαίος κωδικός για τον διαχειριστή PostgreSQL. |
 | `CLOUD_APP_PASSWORD_SECRET` | Διαφορετικός τυχαίος κωδικός για τον χρήστη εφαρμογής PostgreSQL. |
+| `CLOUD_WEB_SYNC_TOKEN_SECRET` | Τυχαίο μυστικό τουλάχιστον 32 χαρακτήρων για την εσωτερική επικοινωνία API και POS. |
 | `CLOUD_TRUSTED_PROXY_ADDRESSES` | Άφησέ το κενό για την αρχική δοκιμή HTTP. Πριν από HTTPS, βάλε την IPv4 διεύθυνση από την οποία το OpenResty συνδέεται στο API. |
 | `POSTGRES_DB` | `restaurant_cloud` |
 | `POSTGRES_ADMIN_USER` | `restaurant_cloud_admin` |
 | `CLOUD_APP_USER` | `restaurant_cloud_app` |
 
-Τα τρία πεδία που τελειώνουν σε `_SECRET` τα περνά το Compose ως Docker secrets. Μη βάλεις κωδικούς, tokens ή ιδιωτικό κλειδί στο GitHub. Δεν χρειάζονται `LICENSE_SIGNING_PRIVATE_KEY_B64`, `CLOUD_ADMIN_KEY` ή PEM: ο server δημιουργεί το κλειδί υπογραφής μόνος του και το κρατά στο volume `cloud-restorder_license-signing-data`.
+Τα πεδία που τελειώνουν σε `_SECRET` τα περνά το Compose ως Docker secrets. Για το `CLOUD_WEB_SYNC_TOKEN_SECRET`, μπορείς να δημιουργήσεις τιμή στο PowerShell με:
+
+```powershell
+[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(48))
+```
+
+Μη βάλεις κωδικούς, tokens ή ιδιωτικό κλειδί στο GitHub. Δεν χρειάζονται `LICENSE_SIGNING_PRIVATE_KEY_B64`, `CLOUD_ADMIN_KEY` ή PEM: ο server δημιουργεί το κλειδί υπογραφής μόνος του και το κρατά στο volume `cloud-restorder_license-signing-data`.
 
 Κάνε deploy και δοκίμασε από υπολογιστή στο ίδιο δίκτυο:
 
@@ -38,7 +45,7 @@
 
 Πρέπει να επιστρέψουν `{"status":"live"}` και `{"status":"ready"}`. Το HTTP είναι μόνο για τον αρχικό έλεγχο· login, διαχείριση αδειών, cloud POS και sync απαιτούν HTTPS.
 
-Το νέο API δημοσιεύεται σταθερά στη θύρα `18081` του host, ώστε να μην εξαρτάται από μεταβλητές Environment. Η PostgreSQL μένει μόνο στο εσωτερικό network `database`. Το API συνδέεται επιπλέον στο `api-egress`, ώστε να είναι προσβάσιμο μέσω της δημοσιευμένης θύρας και να έχει εξερχόμενη σύνδεση στο Internet.
+Το API δημοσιεύεται σταθερά στη θύρα `18081` του host, ώστε να μην εξαρτάται από μεταβλητές Environment. Η PostgreSQL μένει μόνο στο εσωτερικό network `database`. Το API και η εσωτερική εφαρμογή POS επικοινωνούν μέσω του `api-egress`. Το POS δεν έχει δημοσιευμένη θύρα και δεν είναι προσβάσιμο χωρίς έγκυρη συνεδρία καταστήματος.
 
 ## 3. Ενεργοποίηση HTTPS μέσω του υπάρχοντος OpenResty
 
@@ -50,7 +57,9 @@
 
 Μέχρι να αλλάξεις το upstream, το παλιό domain θα συνεχίσει να δείχνει στο παλιό stack. Για επιστροφή αρκεί να επαναφέρεις το upstream στο `18080`. Μην προωθήσεις τη θύρα 18081 από τον router προς το Internet· η δημόσια πρόσβαση πρέπει να περνά από το HTTPS proxy.
 
-Στο νέο License Manager συνδέσου με τα στοιχεία που όρισες παραπάνω. Δημιούργησε πελάτη, άδεια και cloud κατάστημα. Το Android tablet ανοίγει το `/pos.html`. Το Windows POS συνδέεται με το HTTPS URL και το Store API token του καταστήματος· κρατά την τοπική SQLite βάση και συνεχίζει να δουλεύει όταν πέσει το Internet.
+Στο νέο License Manager συνδέσου με τα στοιχεία που όρισες παραπάνω. Δημιούργησε πελάτη, άδεια και cloud κατάστημα. Το Android tablet ανοίγει το `/pos.html`, συνδέεται με το email/κωδικό του καταστήματος και μετά βλέπει τις ίδιες οθόνες POS, διαχείρισης και αναφορών με την εφαρμογή Windows. Το cloud POS κρατά ξεχωριστή SQLite βάση για κάθε κατάστημα. Το Windows POS συνδέεται με το HTTPS URL και το Store API token του καταστήματος· κρατά τη δική του τοπική SQLite και συγχρονίζει και προς τις δύο κατευθύνσεις. Όταν πέσει το Internet, το Windows POS συνεχίζει τοπικά και στέλνει τις αλλαγές όταν επανέλθει. Οι τοπικοί εκτυπωτές και τα συνδεδεμένα φορολογικά/τραπεζικά τερματικά συνεχίζουν να λειτουργούν από το Windows PC.
+
+Ο πρώτος λογαριασμός διαχειριστή δημιουργείται μαζί με το cloud κατάστημα. Από το μενού **Χρήστες** στην εφαρμογή πρόσθεσε λογαριασμούς email για το προσωπικό ή επιπλέον διαχειριστές· οι κωδικοί πρέπει να έχουν τουλάχιστον 12 χαρακτήρες.
 
 ## 4. Επόμενες εκδόσεις
 
@@ -62,5 +71,6 @@
 
 - `cloud-restorder_postgres-data`: πελάτες, άδειες, χρήστες, μενού, τραπέζια και cloud παραγγελίες.
 - `cloud-restorder_license-signing-data`: ιδιωτικό κλειδί υπογραφής αδειών.
+- `cloud-restorder_cloud-web-data`: ξεχωριστές βάσεις POS ανά κατάστημα.
 
 Τα volumes διατηρούνται στα redeploy. Μην χρησιμοποιήσεις `docker compose down -v` και ρύθμισε αντίγραφα ασφαλείας.

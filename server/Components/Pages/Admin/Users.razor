@@ -1,8 +1,47 @@
 @page "/admin/users"
 @attribute [Authorize(Roles = "Admin")]
 @rendermode InteractiveServer
+@using System.Text.Json
+@inject IConfiguration Configuration
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject IJSRuntime JS
 
+@if (Configuration.GetValue<bool>("CloudWeb:Enabled"))
+{
+    <h2>Λογαριασμοί Cloud POS</h2>
+    <p class="hint">Δημιούργησε λογαριασμούς email και κωδικού για όσους θα συνδέονται στο Cloud POS. Η πρόσβαση και οι ρόλοι ισχύουν μόνο για το συγκεκριμένο κατάστημα.</p>
+    <form class="admin-form quick-add-form" @onsubmit="CreateCloudUserAsync" @onsubmit:preventDefault="true">
+        <div class="form-row"><label>Email *</label><input type="email" @bind="cloudEmail" autocomplete="off" required /></div>
+        <div class="form-row"><label>Κωδικός *</label><input type="password" @bind="cloudPassword" autocomplete="new-password" placeholder="Τουλάχιστον 12 χαρακτήρες" minlength="12" required /></div>
+        <div class="form-row"><label>Ρόλος</label><select @bind="cloudRole"><option value="waiter">Προσωπικό</option><option value="admin">Διαχειριστής</option></select></div>
+        <button type="submit" disabled="@cloudBusy">@(cloudBusy ? "Αποθηκεύεται…" : "Προσθήκη λογαριασμού")</button>
+    </form>
+    @if (!string.IsNullOrWhiteSpace(cloudMessage))
+    {
+        <p class="@(cloudIsError ? "error" : "status")" role="status">@cloudMessage</p>
+    }
+    <table class="admin-table">
+        <thead><tr><th>Email</th><th>Ρόλος</th><th>Κατάσταση</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var account in cloudUsers)
+            {
+                <tr>
+                    <td>@account.Email</td>
+                    <td>@(account.Role == "admin" ? "Διαχειριστής" : "Προσωπικό")</td>
+                    <td>@(account.IsActive ? "Ενεργός" : "Απενεργοποιημένος")</td>
+                    <td>
+                        @if (account.Role != "admin" && account.IsActive)
+                        {
+                            <button class="danger" disabled="@cloudBusy" @onclick="() => DeactivateCloudUserAsync(account)">Απενεργοποίηση</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+else
+{
 <h2>Χρήστες (πλήρης διαχείριση)</h2>
 <p class="hint">Για γρήγορη προσθήκη σερβιτόρου/μπάρμαν, χρησιμοποίησε το κουμπί "Προσθήκη χρηστών" στην αρχική οθόνη.
 Εδώ μπορείς επίσης να φτιάξεις άλλους λογαριασμούς Διαχειριστή, να ενεργοποιήσεις/απενεργοποιήσεις χρήστες,
@@ -72,15 +111,86 @@
         }
     </tbody>
 </table>
+}
 
 @code {
+    private sealed record CloudManagedUser(int Id, Guid StoreId, string Email, string Role, bool IsActive);
+    private static readonly JsonSerializerOptions CloudJsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly List<CloudManagedUser> cloudUsers = new();
+    private string cloudEmail = "";
+    private string cloudPassword = "";
+    private string cloudRole = "waiter";
+    private string? cloudMessage;
+    private bool cloudIsError;
+    private bool cloudBusy;
+
     private List<User> items = new();
     private string newFirstName = "", newLastName = "", newCode = "", newPhone = "", newJobTitle = "";
     private string newRole = "Waiter";
     private string? errorMessage;
     private Dictionary<int, string> codeResetValues = new();
 
-    protected override async Task OnInitializedAsync() => await Load();
+    protected override async Task OnInitializedAsync()
+    {
+        if (Configuration.GetValue<bool>("CloudWeb:Enabled")) await LoadCloudUsersAsync();
+        else await Load();
+    }
+
+    private async Task LoadCloudUsersAsync()
+    {
+        try
+        {
+            var result = await JS.InvokeAsync<JsonElement>("restaurantOrders.cloudPosUsers.list");
+            cloudUsers.Clear();
+            cloudUsers.AddRange(JsonSerializer.Deserialize<List<CloudManagedUser>>(result.GetRawText(), CloudJsonOptions) ?? new());
+        }
+        catch (Exception ex)
+        {
+            cloudMessage = "Δεν φορτώθηκαν οι λογαριασμοί Cloud POS: " + ex.Message;
+            cloudIsError = true;
+        }
+    }
+
+    private async Task CreateCloudUserAsync()
+    {
+        cloudBusy = true;
+        cloudMessage = null;
+        cloudIsError = false;
+        try
+        {
+            await JS.InvokeAsync<JsonElement>("restaurantOrders.cloudPosUsers.create", new { email = cloudEmail, password = cloudPassword, role = cloudRole });
+            cloudEmail = "";
+            cloudPassword = "";
+            cloudMessage = "Ο λογαριασμός προστέθηκε.";
+            await LoadCloudUsersAsync();
+        }
+        catch (Exception ex)
+        {
+            cloudMessage = "Δεν δημιουργήθηκε ο λογαριασμός: " + ex.Message;
+            cloudIsError = true;
+        }
+        finally { cloudBusy = false; }
+    }
+
+    private async Task DeactivateCloudUserAsync(CloudManagedUser account)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", $"Να απενεργοποιηθεί ο λογαριασμός {account.Email};")) return;
+        cloudBusy = true;
+        cloudMessage = null;
+        cloudIsError = false;
+        try
+        {
+            await JS.InvokeAsync<JsonElement>("restaurantOrders.cloudPosUsers.deactivate", account.Id);
+            cloudMessage = "Ο λογαριασμός απενεργοποιήθηκε.";
+            await LoadCloudUsersAsync();
+        }
+        catch (Exception ex)
+        {
+            cloudMessage = "Δεν απενεργοποιήθηκε ο λογαριασμός: " + ex.Message;
+            cloudIsError = true;
+        }
+        finally { cloudBusy = false; }
+    }
 
     private async Task Load()
     {

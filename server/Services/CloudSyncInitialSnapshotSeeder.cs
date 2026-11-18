@@ -14,6 +14,8 @@ namespace RestaurantOrders.Services;
 /// </summary>
 public sealed class CloudSyncInitialSnapshotSeeder
 {
+    private const int CurrentSnapshotVersion = 2;
+
     public async Task EnsureInitialSnapshotAsync(AppDbContext db, CancellationToken cancellationToken)
     {
         await using var transaction = db.Database.CurrentTransaction is null
@@ -21,7 +23,7 @@ public sealed class CloudSyncInitialSnapshotSeeder
             : null;
 
         var state = await db.CloudSyncSnapshotStates.SingleOrDefaultAsync(item => item.Id == 1, cancellationToken);
-        if (state?.CompletedAtUtc is not null)
+        if (state?.CompletedAtUtc is not null && state.SnapshotVersion >= CurrentSnapshotVersion)
         {
             if (transaction is not null) await transaction.CommitAsync(cancellationToken);
             return;
@@ -36,23 +38,44 @@ public sealed class CloudSyncInitialSnapshotSeeder
         var occurredAtUtc = DateTimeOffset.UtcNow;
         var events = new List<CloudSyncOutboxEvent>();
 
-        AddSnapshots(events, await db.TableAreas.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
-        AddSnapshots(events, await db.Tables.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
-        AddSnapshots(events, await db.MenuCategories.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
-        AddSnapshots(events, await db.MenuItems.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
-        AddSnapshots(events, await db.ExtraOptions.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
-        AddSnapshots(events, await db.Orders.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
-        AddSnapshots(events, await db.OrderItems.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
-        AddSnapshots(events, await db.OrderPayments.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
-        AddSnapshots(events, await db.OrderPaymentItems.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.Users.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.TableAreas.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.PrinterStations.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.Tables.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.MenuCategories.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.MenuItems.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.ExtraOptions.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.RestaurantAppearances.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.CompanySettings.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.BankPosTerminalSettings.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.InvoiceSeries.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.InventoryItems.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.InventorySuppliers.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.Orders.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.OrderItems.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.OrderPayments.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.OrderPaymentItems.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.OrderPrintBatches.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.DayCloses.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.FiscalOrderDocuments.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.FiscalOrderDocumentItems.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.FiscalOrderCancellations.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.CancellationAuditEntries.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.InventoryRecipeLines.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.InventoryPurchases.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.InventoryPurchaseLines.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.InventoryMovements.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.TableTransfers.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
+        AddSnapshots(db, events, await db.ReceiptNumberHolds.AsNoTracking().ToListAsync(cancellationToken), occurredAtUtc);
 
         db.CloudSyncOutboxEvents.AddRange(events);
         state.CompletedAtUtc = occurredAtUtc;
+        state.SnapshotVersion = CurrentSnapshotVersion;
         await db.SaveChangesAsync(cancellationToken);
         if (transaction is not null) await transaction.CommitAsync(cancellationToken);
     }
 
-    private static void AddSnapshots<TEntity>(
+    private static void AddSnapshots<TEntity>(AppDbContext db,
         ICollection<CloudSyncOutboxEvent> target,
         IEnumerable<TEntity> source,
         DateTimeOffset occurredAtUtc) where TEntity : class
@@ -61,9 +84,10 @@ public sealed class CloudSyncInitialSnapshotSeeder
         if (!CloudSyncEntityPolicy.SnapshotTypes.TryGetValue(entityType, out var allowedProperties))
             return;
 
-        var idProperty = entityType.GetProperty("Id", BindingFlags.Instance | BindingFlags.Public);
-        if (idProperty is null)
-            throw new InvalidOperationException($"Cloud snapshot type {entityType.Name} has no Id property.");
+        var keyName = db.Model.FindEntityType(entityType)?.FindPrimaryKey()?.Properties.SingleOrDefault()?.Name
+            ?? throw new InvalidOperationException($"Cloud snapshot type {entityType.Name} has no single-column key.");
+        var idProperty = entityType.GetProperty(keyName, BindingFlags.Instance | BindingFlags.Public)
+            ?? throw new InvalidOperationException($"Cloud snapshot key {entityType.Name}.{keyName} was not found.");
 
         var snapshotProperties = allowedProperties
             .Order(StringComparer.Ordinal)

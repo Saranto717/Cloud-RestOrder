@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.Extensions.Options;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.Globalization;
 using System.Text.Json;
+using System.Security.Cryptography;
 using RestaurantOrders.Models;
 using RestaurantOrders.Services;
 
@@ -11,14 +13,16 @@ namespace RestaurantOrders.Data;
 public class AppDbContext : DbContext
 {
     private readonly bool _cloudSyncEnabled;
+    private readonly bool _cloudHosted;
 
     private readonly CloudSyncRuntimeState? _cloudSyncRuntimeState;
 
     public AppDbContext(DbContextOptions<AppDbContext> options, IOptions<CloudSyncOptions>? cloudSyncOptions = null,
-        CloudSyncRuntimeState? cloudSyncRuntimeState = null) : base(options)
+        CloudSyncRuntimeState? cloudSyncRuntimeState = null, bool cloudHosted = false) : base(options)
     {
         _cloudSyncEnabled = cloudSyncOptions?.Value.Enabled == true;
         _cloudSyncRuntimeState = cloudSyncRuntimeState;
+        _cloudHosted = cloudHosted;
     }
 
     public DbSet<User> Users => Set<User>();
@@ -105,6 +109,7 @@ public class AppDbContext : DbContext
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
+        AssignCloudHostedIds();
         using var transaction = Database.CurrentTransaction is null ? Database.BeginTransaction() : null;
         CheckTransferLocks();
         var syncChanges = IsCloudSyncEnabled && !SuppressCloudSyncCapture && acceptAllChangesOnSuccess ? CaptureCloudSyncChanges() : [];
@@ -120,6 +125,7 @@ public class AppDbContext : DbContext
 
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
+        AssignCloudHostedIds();
         await using var transaction = Database.CurrentTransaction is null ? await Database.BeginTransactionAsync(cancellationToken) : null;
         CheckTransferLocks();
         var syncChanges = IsCloudSyncEnabled && !SuppressCloudSyncCapture && acceptAllChangesOnSuccess ? CaptureCloudSyncChanges() : [];
@@ -164,6 +170,19 @@ public class AppDbContext : DbContext
     }
 
     private bool IsCloudSyncEnabled => _cloudSyncRuntimeState?.Enabled ?? _cloudSyncEnabled;
+
+    private void AssignCloudHostedIds()
+    {
+        if (!_cloudHosted) return;
+        foreach (var entry in ChangeTracker.Entries().Where(item => item.State == EntityState.Added))
+        {
+            var key = entry.Metadata.FindPrimaryKey()?.Properties.SingleOrDefault();
+            if (key?.ClrType != typeof(int) || entry.Property(key.Name).CurrentValue is not 0) continue;
+            // New rows created in the cloud use negative IDs, leaving the positive
+            // ID range used by an offline Windows database free from collisions.
+            entry.Property(key.Name).CurrentValue = -RandomNumberGenerator.GetInt32(1, int.MaxValue);
+        }
+    }
 
     private static CloudSyncOutboxEvent CreateOutboxEvent(PendingCloudSyncChange change)
     {
@@ -395,47 +414,40 @@ public class AppDbContext : DbContext
     }
 }
 
-internal static class CloudSyncEntityPolicy
+public static class CloudSyncEntityPolicy
 {
-    private static readonly IReadOnlyDictionary<Type, IReadOnlySet<string>> Properties = new Dictionary<Type, IReadOnlySet<string>>
+    private static readonly string[] ExcludedProperties =
+    [
+        "AadeRegistryPassword", "ParochosSubscriptionKey", "ParochosPassword",
+        "ApiKey", "ApiSecret", "Password", "RedeemCode", "Username"
+    ];
+
+    private static readonly Type[] EntityTypes =
+    [
+        typeof(User), typeof(TableArea), typeof(RestaurantTable), typeof(PrinterStation), typeof(MenuCategory),
+        typeof(MenuItem), typeof(Order), typeof(OrderItem), typeof(OrderPrintBatch), typeof(OrderPayment),
+        typeof(OrderPaymentItem), typeof(FiscalOrderDocumentItem), typeof(ExtraOption), typeof(DayClose),
+        typeof(CompanySettings), typeof(RestaurantAppearance), typeof(BankPosTerminalSettings),
+        typeof(ReceiptNumberHold), typeof(InvoiceSeries), typeof(FiscalOrderDocument),
+        typeof(FiscalOrderCancellation), typeof(CancellationAuditEntry), typeof(TableTransfer),
+        typeof(InventoryItem), typeof(InventoryRecipeLine), typeof(InventorySupplier),
+        typeof(InventoryPurchase), typeof(InventoryPurchaseLine), typeof(InventoryMovement)
+    ];
+
+    private static readonly IReadOnlyDictionary<Type, IReadOnlySet<string>> Properties = EntityTypes
+        .ToDictionary(type => type, type => (IReadOnlySet<string>)type.GetProperties()
+            .Where(property => property.Name != "Id" && property.CanRead && property.CanWrite &&
+                property.GetCustomAttributes(typeof(NotMappedAttribute), true).Length == 0 &&
+                IsScalar(property.PropertyType) && !ExcludedProperties.Contains(property.Name, StringComparer.Ordinal))
+            .Select(property => property.Name).ToHashSet(StringComparer.Ordinal));
+
+    private static bool IsScalar(Type type)
     {
-        [typeof(TableArea)] = new HashSet<string>(StringComparer.Ordinal) { "Name", "TileWidth", "TileHeight", "Rows" },
-        [typeof(RestaurantTable)] = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "Name", "IsActive", "IsTakeAway", "SortOrder", "TableAreaId", "PosX", "PosY",
-            "TileBackgroundColor", "TileTextColor", "TileBorderColor", "TileFontSize", "TileBold"
-        },
-        [typeof(MenuCategory)] = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "Name", "IsActive", "VatPercent", "VatCategoryCode", "IncomeClassificationCategory", "OrderPriority", "AutoOpenExtras"
-        },
-        [typeof(MenuItem)] = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "Name", "Price", "StaffConsumptionPrice", "IsAvailable", "MenuCategoryId", "VatPercentOverride",
-            "VatCategoryCodeOverride", "MeasurementUnitCode", "DisplayOrder", "TileSize", "TileScale"
-        },
-        [typeof(ExtraOption)] = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "Name", "Price", "MenuCategoryId", "DisplayOrder", "TileSize", "TileScale"
-        },
-        [typeof(Order)] = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "RestaurantTableId", "WaiterUserId", "CreatedAt", "ClosedAt", "Status", "PaymentMethod"
-        },
-        [typeof(OrderItem)] = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "OrderId", "MenuItemId", "Quantity", "Notes", "ExtrasPrice", "DiscountPercent", "CreatedAt",
-            "IsCancelled", "CancelledAt", "CancelReason"
-        },
-        [typeof(OrderPayment)] = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "OrderId", "Amount", "PaymentMethod", "DocumentKind", "CreatedAt"
-        },
-        [typeof(OrderPaymentItem)] = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "OrderPaymentId", "OrderItemId", "Quantity"
-        }
-    };
+        type = Nullable.GetUnderlyingType(type) ?? type;
+        return type.IsEnum || type.IsPrimitive || type == typeof(string) || type == typeof(decimal) ||
+            type == typeof(DateTime) || type == typeof(DateTimeOffset) || type == typeof(TimeSpan) || type == typeof(Guid) ||
+            type == typeof(byte[]);
+    }
 
     public static bool TryGetProperties(Type entityType, out IReadOnlySet<string> properties) =>
         Properties.TryGetValue(entityType, out properties!);

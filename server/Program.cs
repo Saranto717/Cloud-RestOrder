@@ -22,6 +22,7 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         ? AppContext.BaseDirectory : null
 });
 var installedDataDirectory = InstalledApplication.Configure(builder);
+var cloudWebMode = builder.Configuration.GetValue<bool>("CloudWeb:Enabled");
 builder.Services.AddDataProtection();
 
 // Enable legacy code pages used by ESC/POS printers (e.g. Windows-1253).
@@ -31,22 +32,32 @@ Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 // χωρίς να επηρεάζει καθόλου το κανονικό `dotnet run` σε development.
 builder.Host.UseWindowsService(options => options.ServiceName = "RestaurantOrders");
 
-builder.Services.AddDbContextFactory<AppDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=restaurant.db"));
-
 builder.Services.AddSingleton(_ => new LicenseService(installedDataDirectory, builder.Configuration));
 builder.Services.AddHttpClient<RemoteLicenseClient>(client => client.Timeout = TimeSpan.FromSeconds(8));
-builder.Services.AddHostedService<RemoteLicenseSyncWorker>();
 builder.Services.Configure<CloudSyncOptions>(builder.Configuration.GetSection("CloudSync"));
-builder.Services.AddHttpClient(nameof(CloudSyncOutboxWorker), client => client.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddSingleton<CloudSyncRuntimeState>();
 builder.Services.AddSingleton<CloudSyncCredentialProtector>();
-builder.Services.AddSingleton<CloudSyncInitialSnapshotSeeder>();
-builder.Services.AddHostedService<CloudSyncOutboxWorker>();
+if (cloudWebMode)
+{
+    builder.Services.AddHttpContextAccessor();
+    builder.Services.AddScoped<IDbContextFactory<AppDbContext>, CloudTenantDbContextFactory>();
+    builder.Services.AddSingleton<CloudTenantDatabaseProvisioner>();
+    builder.Services.AddSingleton<CloudWebInternalToken>();
+    builder.Services.AddHostedService<CloudTenantSyncWorker>();
+}
+else
+{
+    builder.Services.AddDbContextFactory<AppDbContext>(options =>
+        options.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=restaurant.db"));
+    builder.Services.AddHostedService<RemoteLicenseSyncWorker>();
+    builder.Services.AddHttpClient(nameof(CloudSyncOutboxWorker), client => client.Timeout = TimeSpan.FromSeconds(20));
+    builder.Services.AddSingleton<CloudSyncInitialSnapshotSeeder>();
+    builder.Services.AddHostedService<CloudSyncOutboxWorker>();
+    builder.Services.AddSingleton<DatabaseBackupService>();
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<DatabaseBackupService>());
+}
 builder.Services.AddScoped<PrinterService>();
 builder.Services.AddScoped<DatabaseExplorerService>();
-builder.Services.AddSingleton<DatabaseBackupService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<DatabaseBackupService>());
 builder.Services.AddHttpClient("Parochos", client => client.Timeout = TimeSpan.FromSeconds(10));
 builder.Services.AddHttpClient("ePay-WebECR", client =>
 {
@@ -87,14 +98,27 @@ builder.Services.AddScoped<TableTransferService>();
 builder.Services.AddScoped<InventoryService>();
 
 
-builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
-    .AddCookie(options =>
+var authBuilder = builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = cloudWebMode ? "CloudGatewayOrCookie" : CookieAuthenticationDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = cloudWebMode ? "CloudGatewayOrCookie" : CookieAuthenticationDefaults.AuthenticationScheme;
+    options.DefaultSignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+    options.DefaultSignOutScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+});
+authBuilder.AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
     {
         options.LoginPath = "/";
         options.AccessDeniedPath = "/access-denied";
         options.ExpireTimeSpan = TimeSpan.FromDays(30);
         options.SlidingExpiration = true;
     });
+if (cloudWebMode)
+{
+    authBuilder.AddScheme<AuthenticationSchemeOptions, CloudGatewayAuthenticationHandler>("CloudGateway", _ => { });
+    authBuilder.AddPolicyScheme("CloudGatewayOrCookie", "Cloud gateway or local account", options =>
+        options.ForwardDefaultSelector = context => context.Request.Headers.ContainsKey("X-Cloud-Store-Id")
+            ? "CloudGateway" : CookieAuthenticationDefaults.AuthenticationScheme);
+}
 
 builder.Services.AddAuthorization();
 builder.Services.AddCascadingAuthenticationState();
@@ -111,9 +135,11 @@ builder.Services.Configure<Microsoft.AspNetCore.SignalR.HubOptions>(options =>
 
 var app = builder.Build();
 
-// Δημιουργία βάσης + αρχικού admin χρήστη στην πρώτη εκκίνηση
-using (var scope = app.Services.CreateScope())
+// Η εγκατάσταση Windows έχει μία τοπική βάση. Το cloud web προετοιμάζει
+// ξεχωριστή βάση ανά store όταν το API gateway πιστοποιήσει τον χρήστη.
+if (!cloudWebMode)
 {
+    using var scope = app.Services.CreateScope();
     var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AppDbContext>>();
     using var db = factory.CreateDbContext();
     DataSeeder.Seed(db);
@@ -143,6 +169,28 @@ app.Use(async (context, next) =>
     });
     await next();
 });
+
+if (cloudWebMode)
+{
+    app.Use(async (context, next) =>
+    {
+        var token = context.RequestServices.GetRequiredService<CloudWebInternalToken>();
+        var storeText = context.Request.Headers["X-Cloud-Store-Id"].ToString();
+        var userText = context.Request.Headers["X-Cloud-User-Id"].ToString();
+        var roleText = context.Request.Headers["X-Cloud-Role"].ToString();
+        if (!token.Matches(context.Request.Headers["X-Cloud-Internal-Token"].ToString()) ||
+            !Guid.TryParse(storeText, out var storeId) || !int.TryParse(userText, out var cloudUserId) ||
+            !Enum.TryParse<Role>(roleText, true, out var role))
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+
+        var provisioner = context.RequestServices.GetRequiredService<CloudTenantDatabaseProvisioner>();
+        await provisioner.EnsureInitializedAsync(storeId, cloudUserId, context.Request.Headers["X-Cloud-Email"].ToString(), role, context.RequestAborted);
+        await next();
+    });
+}
 
 // An unlicensed installed server can only show the activation page and keep
 // its Blazor circuit alive. Development runs are not license-gated.
@@ -295,14 +343,17 @@ app.MapGet("/api/cashier/day-close-pdf", async (HttpContext http, IDbContextFact
 })
 .RequireAuthorization(new Microsoft.AspNetCore.Authorization.AuthorizeAttribute { Roles = "Admin" });
 
-app.MapGet("/api/admin/backups/{fileName}", (string fileName, DatabaseBackupService backups) =>
+if (!cloudWebMode)
 {
-    var path = backups.GetBackupPath(fileName);
-    return path is null
-        ? Results.NotFound()
-        : Results.File(path, "application/octet-stream", fileName);
-})
-.RequireAuthorization(new Microsoft.AspNetCore.Authorization.AuthorizeAttribute { Roles = "Admin" });
+    app.MapGet("/api/admin/backups/{fileName}", (string fileName, DatabaseBackupService backups) =>
+    {
+        var path = backups.GetBackupPath(fileName);
+        return path is null
+            ? Results.NotFound()
+            : Results.File(path, "application/octet-stream", fileName);
+    })
+    .RequireAuthorization(new Microsoft.AspNetCore.Authorization.AuthorizeAttribute { Roles = "Admin" });
+}
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
