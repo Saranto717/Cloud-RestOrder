@@ -1,4 +1,4 @@
-# Δημιουργία installer RestaurantOrders 17.3.127
+# Δημιουργία installer RestaurantOrders 17.3.130
 
 Απαιτούνται Windows x64, .NET 8 SDK x64 και Inno Setup 6.
 Άνοιξε PowerShell στον βασικό φάκελο του source.
@@ -11,7 +11,7 @@
 Για τη δημιουργία του installer:
 
 ```powershell
- .\installer\windows\Build-Installer.ps1 -Version 17.3.127
+ .\installer\windows\Build-Installer.ps1 -Version 17.3.130
 ```
 
 Τα αρχεία setup και τα SHA-256 δημιουργούνται στον φάκελο `artifacts\installer`.

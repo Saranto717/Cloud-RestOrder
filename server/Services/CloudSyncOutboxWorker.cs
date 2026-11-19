@@ -83,17 +83,30 @@ public sealed class CloudSyncOutboxWorker(
             await SaveDeviceSecretAsync(settings, cancellationToken);
         }
 
-        if (!settings.DeviceRegistered)
+        var firstPairing = !settings.DeviceRegistered;
+        if (firstPairing)
         {
             await RegisterDeviceAsync(baseUri, storeToken, installationId, deviceSecret, cancellationToken);
             settings.DeviceRegistered = true;
             await SetSyncStatusAsync(null, registered: true, cancellationToken);
         }
 
-        await using (var db = await dbFactory.CreateDbContextAsync(cancellationToken))
-            await initialSnapshotSeeder.EnsureInitialSnapshotAsync(db, cancellationToken);
+        if (firstPairing && await CloudHasStoreDataAsync(baseUri, installationId, deviceSecret, cancellationToken))
+        {
+            // The cloud database is the canonical store. A newly paired Windows
+            // SQLite installation imports it instead of publishing its stale local
+            // baseline over the cloud. Local rows remain available on that PC.
+            await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+            await initialSnapshotSeeder.MarkInitialSnapshotAsCloudAuthoritativeAsync(db, cancellationToken);
+        }
+        else
+        {
+            await using (var db = await dbFactory.CreateDbContextAsync(cancellationToken))
+                await initialSnapshotSeeder.EnsureInitialSnapshotAsync(db, cancellationToken);
 
-        await PushPendingEventsAsync(baseUri, installationId, deviceSecret, cancellationToken);
+            await PushPendingEventsAsync(baseUri, installationId, deviceSecret, cancellationToken);
+        }
+
         var pending = await PullAndApplyAsync(baseUri, installationId, deviceSecret, settings.LastCloudCursor, cancellationToken);
         await ProcessIncomingCloudDispatchAsync(cancellationToken);
         return pending;
@@ -112,6 +125,22 @@ public sealed class CloudSyncOutboxWorker(
         var detail = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"Η αρχική σύζευξη συσκευής απέτυχε (HTTP {(int)response.StatusCode}): {ShortDetail(detail)}");
+    }
+
+    private async Task<bool> CloudHasStoreDataAsync(Uri baseUri, Guid installationId, string deviceSecret,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = new Uri(baseUri, "api/sync/v1/entities?afterId=0&limit=1");
+        using var request = CloudSyncRequestSigner.Create(HttpMethod.Get, endpoint, installationId, deviceSecret, []);
+        using var response = await CreateClient().SendAsync(request, cancellationToken);
+        var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Έλεγχος αρχικών cloud δεδομένων: HTTP {(int)response.StatusCode}: {ShortDetail(responseText)}");
+        var page = JsonSerializer.Deserialize<CloudSyncEntityPage>(responseText, JsonOptions)
+            ?? throw new InvalidDataException("Το cloud επέστρεψε κενή αρχική σελίδα συγχρονισμού.");
+        if (page.StoreId == Guid.Empty || page.NextCursor < 0)
+            throw new InvalidDataException("Το cloud επέστρεψε αρχικά δεδομένα άλλου καταστήματος.");
+        return page.Entities.Count > 0 || page.NextCursor > 0 || page.HasMore;
     }
 
     private async Task PushPendingEventsAsync(Uri baseUri, Guid installationId, string deviceSecret,

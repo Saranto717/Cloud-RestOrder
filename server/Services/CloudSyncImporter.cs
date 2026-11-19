@@ -4,6 +4,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Npgsql;
 using RestaurantOrders.Data;
 using RestaurantOrders.Models;
 
@@ -141,7 +142,9 @@ public static class CloudSyncImporter
             await transaction.CommitAsync(cancellationToken);
             return true;
         }
-        catch (DbUpdateException exception) when (exception.InnerException is SqliteException { SqliteExtendedErrorCode: 787 })
+        catch (DbUpdateException exception) when (
+            exception.InnerException is SqliteException { SqliteExtendedErrorCode: 787 } or
+            PostgresException { SqlState: PostgresErrorCodes.ForeignKeyViolation })
         {
             // A referenced delete or a racing dependency remains queued. The
             // enclosing transaction rolls back both data and inbox acknowledgement.

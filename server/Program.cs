@@ -23,6 +23,8 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 });
 var installedDataDirectory = InstalledApplication.Configure(builder);
 var cloudWebMode = builder.Configuration.GetValue<bool>("CloudWeb:Enabled");
+if (cloudWebMode)
+    AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 builder.Services.AddDataProtection();
 
 // Enable legacy code pages used by ESC/POS printers (e.g. Windows-1253).
@@ -40,6 +42,7 @@ builder.Services.AddSingleton<CloudSyncCredentialProtector>();
 if (cloudWebMode)
 {
     builder.Services.AddHttpContextAccessor();
+    builder.Services.AddSingleton<CloudTenantPostgresDatabase>();
     builder.Services.AddScoped<IDbContextFactory<AppDbContext>, CloudTenantDbContextFactory>();
     builder.Services.AddSingleton<CloudTenantDatabaseProvisioner>();
     builder.Services.AddSingleton<CloudWebInternalToken>();
@@ -270,6 +273,63 @@ async Task SignInUser(HttpContext http, User user)
     }
     var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
     await http.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
+}
+
+if (cloudWebMode)
+{
+    app.MapPost("/api/bootstrap-admin", async (HttpContext http, IDbContextFactory<AppDbContext> dbFactory,
+        IConfiguration configuration) =>
+    {
+        if (http.User.Identity?.IsAuthenticated != true || !http.User.IsInRole("Store") ||
+            !string.Equals(http.User.FindFirst("cloud_user_role")?.Value, Role.Admin.ToString(), StringComparison.OrdinalIgnoreCase) ||
+            !Guid.TryParse(http.Request.Headers["X-Cloud-Store-Id"], out var storeId) ||
+            !string.Equals(http.User.FindFirst("cloud_store_id")?.Value, storeId.ToString("D"), StringComparison.OrdinalIgnoreCase))
+            return Results.Forbid();
+
+        var storeDirectory = Path.Combine(configuration["CloudWeb:DataDirectory"] ?? "/var/lib/restaurantorders/cloud-web", storeId.ToString("N"));
+        if (File.Exists(Path.Combine(storeDirectory, "restaurant.db")) &&
+            !File.Exists(Path.Combine(storeDirectory, "postgres.migrated")))
+            return Results.Conflict("Γίνεται μεταφορά των υπαρχόντων δεδομένων του καταστήματος. Περίμενε λίγο και ξαναδοκίμασε.");
+
+        var origin = http.Request.Headers.Origin.ToString();
+        var externalHost = http.Request.Headers["X-Cloud-External-Host"].ToString();
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var originUri) || string.IsNullOrWhiteSpace(externalHost) ||
+            !string.Equals(originUri.Host, externalHost, StringComparison.OrdinalIgnoreCase))
+            return Results.BadRequest("Η δημιουργία διαχειριστή πρέπει να ξεκινήσει από τη σελίδα του καταστήματος.");
+
+        var form = await http.Request.ReadFormAsync(http.RequestAborted);
+        var fullName = form["fullName"].ToString().Trim();
+        var pin = form["pin"].ToString();
+        var pinConfirmation = form["pinConfirmation"].ToString();
+        if (fullName.Length is < 2 or > 120 || fullName.Any(char.IsControl) ||
+            pin.Length != 4 || pin.Any(character => !char.IsAsciiDigit(character)) || pin != pinConfirmation)
+            return Results.BadRequest("Συμπλήρωσε όνομα και ίδιο PIN τεσσάρων ψηφίων.");
+
+        var tenantLock = CloudTenantDatabaseProvisioner.Locks.GetOrAdd(storeId, _ => new SemaphoreSlim(1, 1));
+        await tenantLock.WaitAsync(http.RequestAborted);
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync(http.RequestAborted);
+            if (await db.Users.AnyAsync(user => user.IsActive && !user.IsCloudIdentity && user.Role == Role.Admin,
+                    http.RequestAborted))
+                return Results.Conflict("Έχει ήδη δημιουργηθεί διαχειριστής για αυτό το κατάστημα.");
+
+            var nameParts = fullName.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var user = new User
+            {
+                FirstName = nameParts[0],
+                LastName = nameParts.Length > 1 ? nameParts[1] : null,
+                CodeHash = PasswordHasher.Hash(pin),
+                Role = Role.Admin,
+                IsActive = true
+            };
+            db.Users.Add(user);
+            await db.SaveChangesAsync(http.RequestAborted);
+            await SignInUser(http, user);
+            return Results.Redirect("/admin/tables");
+        }
+        finally { tenantLock.Release(); }
+    });
 }
 
 // Σύνδεση διαχειριστή: πατάει την καρτέλα του (μόνο διαχειριστές εμφανίζονται) + δικός του κωδικός.

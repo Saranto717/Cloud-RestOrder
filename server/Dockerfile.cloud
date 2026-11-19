@@ -13,11 +13,15 @@ RUN dotnet publish server/RestaurantOrders.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 ENV ASPNETCORE_HTTP_PORTS=8080 \
+    TZ=Europe/Athens \
     CloudWeb__Enabled=true \
     CloudWeb__DataDirectory=/var/lib/restaurantorders/cloud-web
 EXPOSE 8080
 COPY --from=build /out ./
-RUN mkdir -p /var/lib/restaurantorders/cloud-web \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/lib/restaurantorders/cloud-web \
     && chown -R $APP_UID:$APP_UID /var/lib/restaurantorders
 USER $APP_UID
 ENTRYPOINT ["dotnet", "RestaurantOrders.dll"]

@@ -190,14 +190,19 @@ public class AppDbContext : DbContext
             // keys too, and persist the allocator in the same write transaction.
             // The range below -1 billion belongs to cloud account audit identities.
             var table = entry.Metadata.GetTableName()!.Replace("\"", "\"\"");
+            var scalarMin = Database.IsSqlite() ? "MIN" : "LEAST";
+            var hostedSequenceTable = Database.IsSqlite() ? "CloudHostedIdSequences" : "\"CloudHostedIdSequences\"";
+            var entityTypeColumn = Database.IsSqlite() ? "EntityType" : "\"EntityType\"";
+            var currentIdColumn = Database.IsSqlite() ? "CurrentId" : "\"CurrentId\"";
+            var idColumn = Database.IsSqlite() ? "Id" : "\"Id\"";
             using var command = Database.GetDbConnection().CreateCommand();
             command.Transaction = Database.CurrentTransaction!.GetDbTransaction();
             command.CommandText = $"""
-                INSERT INTO CloudHostedIdSequences (EntityType, CurrentId)
-                VALUES (@entityType, COALESCE((SELECT MIN(Id) FROM "{table}" WHERE Id < 0 AND Id > -1000000000), 0) - 1)
-                ON CONFLICT (EntityType) DO UPDATE SET CurrentId = MIN(CurrentId,
-                    COALESCE((SELECT MIN(Id) FROM "{table}" WHERE Id < 0 AND Id > -1000000000), 0)) - 1
-                RETURNING CurrentId
+                INSERT INTO {hostedSequenceTable} ({entityTypeColumn}, {currentIdColumn})
+                VALUES (@entityType, COALESCE((SELECT MIN({idColumn}) FROM "{table}" WHERE {idColumn} < 0 AND {idColumn} > -1000000000), 0) - 1)
+                ON CONFLICT ({entityTypeColumn}) DO UPDATE SET {currentIdColumn} = {scalarMin}({hostedSequenceTable}.{currentIdColumn},
+                    COALESCE((SELECT MIN({idColumn}) FROM "{table}" WHERE {idColumn} < 0 AND {idColumn} > -1000000000), 0)) - 1
+                RETURNING {currentIdColumn}
                 """;
             var parameter = command.CreateParameter();
             parameter.ParameterName = "@entityType";

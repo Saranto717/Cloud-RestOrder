@@ -16,6 +16,36 @@ public sealed class CloudSyncInitialSnapshotSeeder
 {
     private const int CurrentSnapshotVersion = 3;
 
+    public async Task MarkInitialSnapshotAsCloudAuthoritativeAsync(AppDbContext db, CancellationToken cancellationToken)
+    {
+        await using var transaction = db.Database.CurrentTransaction is null
+            ? await db.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+
+        db.SuppressCloudSyncCapture = true;
+        var state = await db.CloudSyncSnapshotStates.SingleOrDefaultAsync(item => item.Id == 1, cancellationToken);
+        if (state is null)
+        {
+            state = new CloudSyncSnapshotState { Id = 1 };
+            db.CloudSyncSnapshotStates.Add(state);
+        }
+        state.CompletedAtUtc = DateTimeOffset.UtcNow;
+        state.SnapshotVersion = CurrentSnapshotVersion;
+
+        var pending = await db.CloudSyncOutboxEvents
+            .Where(item => item.AcknowledgedAtUtc == null)
+            .ToListAsync(cancellationToken);
+        var completedAt = DateTimeOffset.UtcNow;
+        foreach (var item in pending)
+        {
+            item.AcknowledgedAtUtc = completedAt;
+            item.LastError = "Το cloud είχε ήδη δεδομένα· το τοπικό αρχικό στιγμιότυπο δεν στάλθηκε.";
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+    }
+
     public async Task EnsureInitialSnapshotAsync(AppDbContext db, CancellationToken cancellationToken)
     {
         await using var transaction = db.Database.CurrentTransaction is null

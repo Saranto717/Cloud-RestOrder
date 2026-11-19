@@ -35,50 +35,76 @@ public sealed class CloudTenantDbContextFactory : IDbContextFactory<AppDbContext
 {
     private readonly string _dataDirectory;
     private readonly CloudSyncRuntimeState _syncState;
+    private readonly CloudTenantPostgresDatabase? _postgresDatabase;
+    private readonly string? _legacySqlitePath;
     private readonly IHttpContextAccessor? _httpContextAccessor;
     private readonly IServiceProvider? _serviceProvider;
 
     public CloudTenantDbContextFactory(IHttpContextAccessor http, IConfiguration configuration,
-        CloudSyncRuntimeState syncState, IServiceProvider serviceProvider)
+        CloudSyncRuntimeState syncState, IServiceProvider serviceProvider, CloudTenantPostgresDatabase postgresDatabase)
     {
         _httpContextAccessor = http;
         _serviceProvider = serviceProvider;
         _dataDirectory = configuration["CloudWeb:DataDirectory"] ?? "/var/lib/restaurantorders/cloud-web";
         _syncState = syncState;
+        _postgresDatabase = postgresDatabase;
     }
 
-    private CloudTenantDbContextFactory(Guid storeId, string dataDirectory, CloudSyncRuntimeState syncState)
+    private CloudTenantDbContextFactory(Guid storeId, CloudTenantPostgresDatabase postgresDatabase,
+        string dataDirectory, CloudSyncRuntimeState syncState)
     {
         _fixedStoreId = storeId;
+        _postgresDatabase = postgresDatabase;
         _dataDirectory = dataDirectory;
+        _syncState = syncState;
+    }
+
+    private CloudTenantDbContextFactory(Guid storeId, string legacySqlitePath, CloudSyncRuntimeState syncState)
+    {
+        _fixedStoreId = storeId;
+        _legacySqlitePath = legacySqlitePath;
+        _dataDirectory = Path.GetDirectoryName(legacySqlitePath)!;
         _syncState = syncState;
     }
 
     private readonly Guid? _fixedStoreId;
 
-    public static CloudTenantDbContextFactory ForStore(Guid storeId, string dataDirectory, CloudSyncRuntimeState syncState) =>
-        new(storeId, dataDirectory, syncState);
+    public static CloudTenantDbContextFactory ForStore(Guid storeId, CloudTenantPostgresDatabase postgresDatabase,
+        string dataDirectory, CloudSyncRuntimeState syncState) => new(storeId, postgresDatabase, dataDirectory, syncState);
+
+    public static CloudTenantDbContextFactory ForLegacyStore(Guid storeId, string dataDirectory,
+        CloudSyncRuntimeState syncState) => new(storeId,
+            Path.Combine(dataDirectory, storeId.ToString("N"), "restaurant.db"), syncState);
 
     public AppDbContext CreateDbContext()
     {
         var storeId = ResolveStoreId();
-        var storeDirectory = Path.Combine(_dataDirectory, storeId.ToString("N"));
-        Directory.CreateDirectory(storeDirectory);
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(storeDirectory, "restaurant.db")}")
-            .Options;
+        var options = BuildOptions(storeId);
         return new AppDbContext(options, Options.Create(new CloudSyncOptions { Enabled = true }), _syncState, cloudHosted: true);
     }
 
     public async Task<AppDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
     {
         var storeId = await ResolveStoreIdAsync(cancellationToken);
-        var storeDirectory = Path.Combine(_dataDirectory, storeId.ToString("N"));
-        Directory.CreateDirectory(storeDirectory);
-        var options = new DbContextOptionsBuilder<AppDbContext>()
-            .UseSqlite($"Data Source={Path.Combine(storeDirectory, "restaurant.db")}")
-            .Options;
+        if (_legacySqlitePath is null)
+            await _postgresDatabase!.EnsureDatabaseExistsAsync(storeId, cancellationToken);
+        var options = BuildOptions(storeId);
         return new AppDbContext(options, Options.Create(new CloudSyncOptions { Enabled = true }), _syncState, cloudHosted: true);
+    }
+
+    private DbContextOptions<AppDbContext> BuildOptions(Guid storeId)
+    {
+        var builder = new DbContextOptionsBuilder<AppDbContext>();
+        if (_legacySqlitePath is not null)
+        {
+            builder.UseSqlite($"Data Source={_legacySqlitePath};Pooling=False");
+        }
+        else
+        {
+            _postgresDatabase!.EnsureDatabaseExistsAsync(storeId).GetAwaiter().GetResult();
+            builder.UseNpgsql(_postgresDatabase.GetConnectionString(storeId));
+        }
+        return builder.Options;
     }
 
     private Guid ResolveStoreId()
@@ -110,11 +136,13 @@ public sealed class CloudTenantDbContextFactory : IDbContextFactory<AppDbContext
     }
 }
 
-public sealed class CloudTenantDatabaseProvisioner(IConfiguration configuration, CloudSyncRuntimeState syncState)
+public sealed class CloudTenantDatabaseProvisioner(IConfiguration configuration, CloudSyncRuntimeState syncState,
+    CloudTenantPostgresDatabase postgresDatabase)
 {
     private readonly string _dataDirectory = configuration["CloudWeb:DataDirectory"] ?? "/var/lib/restaurantorders/cloud-web";
     internal static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, SemaphoreSlim> Locks = new();
     internal static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> InitializedStores = new();
+    internal static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> LegacyInitializedStores = new();
 
     public async Task EnsureInitializedAsync(Guid storeId, int cloudUserId, string email, Role role, CancellationToken cancellationToken)
     {
@@ -122,7 +150,7 @@ public sealed class CloudTenantDatabaseProvisioner(IConfiguration configuration,
         await tenantLock.WaitAsync(cancellationToken);
         try
         {
-            var factory = CloudTenantDbContextFactory.ForStore(storeId, _dataDirectory, syncState);
+            var factory = CloudTenantDbContextFactory.ForStore(storeId, postgresDatabase, _dataDirectory, syncState);
             await using var db = await factory.CreateDbContextAsync(cancellationToken);
             if (!InitializedStores.ContainsKey(storeId))
             {
@@ -194,6 +222,7 @@ public sealed class CloudGatewayAuthenticationHandler(
             new(ClaimTypes.Role, "Store"),
             new("cloud_store_id", parsedStore.ToString("D")),
             new("cloud_user_id", parsedUser.ToString(CultureInfo.InvariantCulture)),
+            new("cloud_user_role", cloudRole.ToString()),
             new(ClaimTypes.Email, email)
         };
         var identity = new ClaimsIdentity(claims, Scheme.Name);
@@ -204,6 +233,8 @@ public sealed class CloudGatewayAuthenticationHandler(
 public sealed class CloudTenantSyncWorker(
     IConfiguration configuration,
     CloudSyncRuntimeState syncState,
+    CloudTenantPostgresDatabase postgresDatabase,
+    CloudSyncInitialSnapshotSeeder initialSnapshotSeeder,
     ILogger<CloudTenantSyncWorker> logger) : BackgroundService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -242,7 +273,7 @@ public sealed class CloudTenantSyncWorker(
         await tenantLock.WaitAsync(cancellationToken);
         try
         {
-            var factory = CloudTenantDbContextFactory.ForStore(storeId, _dataDirectory, syncState);
+            var factory = CloudTenantDbContextFactory.ForStore(storeId, postgresDatabase, _dataDirectory, syncState);
             await using (var initialization = await factory.CreateDbContextAsync(cancellationToken))
             {
                 if (!CloudTenantDatabaseProvisioner.InitializedStores.ContainsKey(storeId))
@@ -251,15 +282,38 @@ public sealed class CloudTenantSyncWorker(
                     CloudTenantDatabaseProvisioner.InitializedStores.TryAdd(storeId, 0);
                 }
             }
+            var legacyPath = Path.Combine(_dataDirectory, storeId.ToString("N"), "restaurant.db");
+            var migrationMarker = Path.Combine(_dataDirectory, storeId.ToString("N"), "postgres.migrated");
+            var migrateLegacy = File.Exists(legacyPath) && !File.Exists(migrationMarker);
+            CloudTenantDbContextFactory? legacyFactory = null;
+            if (migrateLegacy)
+            {
+                legacyFactory = CloudTenantDbContextFactory.ForLegacyStore(storeId, _dataDirectory, syncState);
+                if (!CloudTenantDatabaseProvisioner.LegacyInitializedStores.ContainsKey(storeId))
+                {
+                    await using var legacyInitialization = await legacyFactory.CreateDbContextAsync(cancellationToken);
+                    DataSeeder.Seed(legacyInitialization, createDefaultAdmin: false);
+                    await initialSnapshotSeeder.EnsureInitialSnapshotAsync(legacyInitialization, cancellationToken);
+                    CloudTenantDatabaseProvisioner.LegacyInitializedStores.TryAdd(storeId, 0);
+                }
+                await PushAsync(client, legacyFactory, storeId, cancellationToken);
+            }
             await PushAsync(client, factory, storeId, cancellationToken);
-            await PullAsync(client, factory, storeId, cancellationToken);
+            var cloudCaughtUp = await PullAsync(client, factory, storeId, cancellationToken);
             var pending = await CloudSyncImporter.ApplyPendingAsync(factory, cancellationToken);
             if (pending > 0) logger.LogWarning("Cloud store {StoreId} has {Pending} received changes waiting for dependencies or local delivery.", storeId, pending);
+            if (migrateLegacy && cloudCaughtUp && legacyFactory is not null &&
+                await GetPendingOutboxCountAsync(legacyFactory, cancellationToken) == 0)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(migrationMarker)!);
+                await File.WriteAllTextAsync(migrationMarker, DateTimeOffset.UtcNow.ToString("O"), cancellationToken);
+                logger.LogInformation("Migrated legacy SQLite cloud-store data for {StoreId} to its PostgreSQL database.", storeId);
+            }
         }
         finally { tenantLock.Release(); }
     }
 
-    private static async Task PullAsync(HttpClient client, IDbContextFactory<AppDbContext> factory, Guid storeId, CancellationToken cancellationToken)
+    private static async Task<bool> PullAsync(HttpClient client, IDbContextFactory<AppDbContext> factory, Guid storeId, CancellationToken cancellationToken)
     {
         long cursor;
         await using (var db = await factory.CreateDbContextAsync(cancellationToken))
@@ -277,7 +331,7 @@ public sealed class CloudTenantSyncWorker(
             cursor = settings.LastCloudCursor;
         }
 
-        for (var pageNumber = 0; pageNumber < 100; pageNumber++)
+        for (var pageNumber = 0; pageNumber < 1000; pageNumber++)
         {
             var page = await client.GetFromJsonAsync<SyncPage>($"api/internal/cloud-web/stores/{storeId:D}/entities?afterId={cursor}&limit=100", JsonOptions, cancellationToken)
                 ?? throw new InvalidDataException("The cloud API returned an empty sync page.");
@@ -285,8 +339,16 @@ public sealed class CloudTenantSyncWorker(
                 throw new InvalidDataException("The cloud API returned an invalid tenant or cursor.");
             await CloudSyncImporter.ReceivePageAsync(factory, page.Entities, page.NextCursor, cancellationToken);
             cursor = page.NextCursor;
-            if (!page.HasMore || page.Entities.Count == 0) break;
+            if (!page.HasMore || page.Entities.Count == 0) return true;
         }
+        return false;
+    }
+
+    private static async Task<int> GetPendingOutboxCountAsync(IDbContextFactory<AppDbContext> factory,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        return await db.CloudSyncOutboxEvents.CountAsync(item => item.AcknowledgedAtUtc == null, cancellationToken);
     }
 
     private static async Task PushAsync(HttpClient client, IDbContextFactory<AppDbContext> factory, Guid storeId, CancellationToken cancellationToken)

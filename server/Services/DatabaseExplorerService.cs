@@ -2,8 +2,11 @@ using System.Data.Common;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Data.Sqlite;
+using Npgsql;
 using RestaurantOrders.Data;
+using RestaurantOrders.Models;
 
 namespace RestaurantOrders.Services;
 
@@ -56,6 +59,11 @@ public sealed class DatabaseExplorerService(IDbContextFactory<AppDbContext> dbFa
     {
         using var db = await dbFactory.CreateDbContextAsync();
         var appConnection = db.Database.GetDbConnection();
+        if (db.Database.IsNpgsql())
+        {
+            await appConnection.OpenAsync();
+            return await GetTablesOnConnectionAsync(appConnection);
+        }
         // Use a dedicated, non-pooled, read-only connection. PRAGMA query_only
         // is connection-scoped; setting it on EF's pooled connection can leave
         // the next normal POS request unable to write after this page closes.
@@ -97,7 +105,9 @@ public sealed class DatabaseExplorerService(IDbContextFactory<AppDbContext> dbFa
             var predicates = new List<string>();
             if (!string.IsNullOrWhiteSpace(search))
             {
-                predicates.AddRange(searchable.Select(c => $"CAST({Quote(c.Name)} AS TEXT) LIKE $term ESCAPE '\\' COLLATE NOCASE"));
+                predicates.AddRange(searchable.Select(c => db.Database.IsNpgsql()
+                    ? $"CAST({Quote(c.Name)} AS TEXT) ILIKE @term ESCAPE '\\'"
+                    : $"CAST({Quote(c.Name)} AS TEXT) LIKE @term ESCAPE '\\' COLLATE NOCASE"));
                 if (predicates.Count == 0) continue;
             }
             var where = predicates.Count == 0 ? "" : " WHERE (" + string.Join(" OR ", predicates) + ")";
@@ -108,13 +118,13 @@ public sealed class DatabaseExplorerService(IDbContextFactory<AppDbContext> dbFa
             if (loginCodeHashColumn is not null)
                 selectedExpressions.Add($"CASE WHEN COALESCE(TRIM(CAST({Quote(loginCodeHashColumn.Name)} AS TEXT)), '') = '' THEN 0 ELSE 1 END");
             await using var command = connection.CreateCommand();
-            command.CommandText = $"SELECT {string.Join(", ", selectedExpressions)} FROM {Quote(table)}{where}{orderBy} LIMIT $take OFFSET $offset";
+            command.CommandText = $"SELECT {string.Join(", ", selectedExpressions)} FROM {Quote(table)}{where}{orderBy} LIMIT @take OFFSET @offset";
             if (predicates.Count > 0)
             {
-                var term = command.CreateParameter(); term.ParameterName = "$term"; term.Value = "%" + EscapeLike(search.Trim()) + "%"; command.Parameters.Add(term);
+                var term = command.CreateParameter(); term.ParameterName = "@term"; term.Value = "%" + EscapeLike(search.Trim()) + "%"; command.Parameters.Add(term);
             }
-            var takeParameter = command.CreateParameter(); takeParameter.ParameterName = "$take"; takeParameter.Value = take; command.Parameters.Add(takeParameter);
-            var offsetParameter = command.CreateParameter(); offsetParameter.ParameterName = "$offset"; offsetParameter.Value = tableName == "*" ? 0 : Math.Max(0, offset); command.Parameters.Add(offsetParameter);
+            var takeParameter = command.CreateParameter(); takeParameter.ParameterName = "@take"; takeParameter.Value = take; command.Parameters.Add(takeParameter);
+            var offsetParameter = command.CreateParameter(); offsetParameter.ParameterName = "@offset"; offsetParameter.Value = tableName == "*" ? 0 : Math.Max(0, offset); command.Parameters.Add(offsetParameter);
             await using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
@@ -181,15 +191,24 @@ public sealed class DatabaseExplorerService(IDbContextFactory<AppDbContext> dbFa
         var connection = db.Database.GetDbConnection();
         await connection.OpenAsync();
 
-        // query_only is connection-scoped and prevents any write even if a
-        // malformed query passes the front-end validation.
+        // Restrict the entire request to read-only mode, including PostgreSQL
+        // data-changing CTEs that begin with SELECT/WITH.
+        await using var readOnlyTransaction = db.Database.IsNpgsql()
+            ? await db.Database.BeginTransactionAsync()
+            : null;
         await using (var readOnly = connection.CreateCommand())
         {
-            readOnly.CommandText = "PRAGMA query_only = ON";
+            if (readOnlyTransaction is not null)
+            {
+                readOnly.Transaction = readOnlyTransaction.GetDbTransaction();
+                readOnly.CommandText = "SET TRANSACTION READ ONLY";
+            }
+            else readOnly.CommandText = "PRAGMA query_only = ON";
             await readOnly.ExecuteNonQueryAsync();
         }
 
         await using var command = connection.CreateCommand();
+        if (readOnlyTransaction is not null) command.Transaction = readOnlyTransaction.GetDbTransaction();
         command.CommandText = sql;
         command.CommandTimeout = 10;
         await using var reader = await command.ExecuteReaderAsync();
@@ -253,8 +272,9 @@ public sealed class DatabaseExplorerService(IDbContextFactory<AppDbContext> dbFa
         }
         if (updatedValues.Count == 0) throw new InvalidOperationException("Δεν υπάρχουν αλλαγές για αποθήκευση.");
 
-        await using var transaction = await connection.BeginTransactionAsync();
-        var before = await ReadRowAsync(connection, tableName, visibleColumns, pkColumns, keys, transaction);
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var dbTransaction = transaction.GetDbTransaction();
+        var before = await ReadRowAsync(connection, tableName, visibleColumns, pkColumns, keys, dbTransaction, postgres: db.Database.IsNpgsql());
         if (before is null) throw new InvalidOperationException("Η εγγραφή δεν βρέθηκε. Κάνε ξανά αναζήτηση.");
         foreach (var column in visibleColumns)
         {
@@ -264,39 +284,43 @@ public sealed class DatabaseExplorerService(IDbContextFactory<AppDbContext> dbFa
                 throw new InvalidOperationException("Η εγγραφή άλλαξε από άλλη ενέργεια μετά την αναζήτηση. Κάνε ξανά αναζήτηση πριν από την αποθήκευση.");
         }
 
-        var assignments = string.Join(", ", updatedValues.Keys.Select((name, index) => $"{Quote(name)} = $v{index}"));
-        var predicate = string.Join(" AND ", pkColumns.Select((c, index) => $"{Quote(c.Name)} IS $k{index}"));
+        var assignments = string.Join(", ", updatedValues.Keys.Select((name, index) => $"{Quote(name)} = @v{index}"));
+        var predicate = string.Join(" AND ", pkColumns.Select((c, index) => $"{Quote(c.Name)} {(db.Database.IsNpgsql() ? "IS NOT DISTINCT FROM" : "IS")} @k{index}"));
         await using (var update = connection.CreateCommand())
         {
-            update.Transaction = transaction;
+            update.Transaction = dbTransaction;
             update.CommandText = $"UPDATE {Quote(tableName)} SET {assignments} WHERE {predicate}";
             var index = 0;
-            foreach (var pair in updatedValues) AddParameter(update, "$v" + index++, pair.Value);
-            for (var i = 0; i < pkColumns.Count; i++) AddParameter(update, "$k" + i, ParseValue(keys[pkColumns[i].Name], pkColumns[i]));
+            foreach (var pair in updatedValues) AddParameter(update, "@v" + index++, pair.Value);
+            for (var i = 0; i < pkColumns.Count; i++) AddParameter(update, "@k" + i, ParseValue(keys[pkColumns[i].Name], pkColumns[i]));
             var affected = await update.ExecuteNonQueryAsync();
             if (affected != 1) throw new InvalidOperationException("Δεν αποθηκεύτηκε μία μοναδική εγγραφή. Έλεγξε ξανά τα κλειδιά.");
         }
-        var after = await ReadRowAsync(connection, tableName, visibleColumns, pkColumns, keys, transaction);
+        var after = await ReadRowAsync(connection, tableName, visibleColumns, pkColumns, keys, dbTransaction, postgres: db.Database.IsNpgsql());
         if (after is null) throw new InvalidOperationException("Η εγγραφή δεν βρέθηκε μετά την αποθήκευση.");
         await using (var audit = connection.CreateCommand())
         {
-            audit.Transaction = transaction;
-            audit.CommandText = "INSERT INTO DatabaseEditAudit (At, UserId, TableName, PrimaryKeyJson, BeforeJson, AfterJson) VALUES ($at, $user, $table, $pk, $before, $after)";
-            AddParameter(audit, "$at", DateTime.Now.ToString("O", CultureInfo.InvariantCulture));
-            AddParameter(audit, "$user", userId);
-            AddParameter(audit, "$table", tableName);
-            AddParameter(audit, "$pk", JsonSerializer.Serialize(keys, JsonOptions));
-            AddParameter(audit, "$before", JsonSerializer.Serialize(before, JsonOptions));
-            AddParameter(audit, "$after", JsonSerializer.Serialize(after, JsonOptions));
+            audit.Transaction = dbTransaction;
+            audit.CommandText = "INSERT INTO DatabaseEditAudit (At, UserId, TableName, PrimaryKeyJson, BeforeJson, AfterJson) VALUES (@at, @user, @table, @pk, @before, @after)";
+            AddParameter(audit, "@at", DateTime.Now.ToString("O", CultureInfo.InvariantCulture));
+            AddParameter(audit, "@user", userId);
+            AddParameter(audit, "@table", tableName);
+            AddParameter(audit, "@pk", JsonSerializer.Serialize(keys, JsonOptions));
+            AddParameter(audit, "@before", JsonSerializer.Serialize(before, JsonOptions));
+            AddParameter(audit, "@after", JsonSerializer.Serialize(after, JsonOptions));
             await audit.ExecuteNonQueryAsync();
         }
+        if (db.IsCloudHosted)
+            await QueueCloudSyncEventAsync(db, tableName, pkColumns, keys);
         await transaction.CommitAsync();
     }
 
     private static async Task<List<string>> GetTablesOnConnectionAsync(DbConnection connection)
     {
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__EF%' ORDER BY name COLLATE NOCASE";
+        command.CommandText = connection is NpgsqlConnection
+            ? "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' AND table_name NOT LIKE '__EF%' ORDER BY table_name"
+            : "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__EF%' ORDER BY name COLLATE NOCASE";
         var names = new List<string>();
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync()) names.Add(reader.GetString(0));
@@ -307,6 +331,31 @@ public sealed class DatabaseExplorerService(IDbContextFactory<AppDbContext> dbFa
     {
         if (!(await GetTablesOnConnectionAsync(connection)).Contains(tableName, StringComparer.Ordinal)) return new();
         await using var command = connection.CreateCommand();
+        if (connection is NpgsqlConnection)
+        {
+            command.CommandText = """
+                SELECT c.column_name, c.data_type, (c.is_nullable = 'NO'), COALESCE(k.ordinal_position, 0)
+                FROM information_schema.columns c
+                LEFT JOIN information_schema.table_constraints tc
+                  ON tc.table_schema = c.table_schema AND tc.table_name = c.table_name AND tc.constraint_type = 'PRIMARY KEY'
+                LEFT JOIN information_schema.key_column_usage k
+                  ON k.constraint_schema = tc.constraint_schema AND k.constraint_name = tc.constraint_name
+                 AND k.table_schema = c.table_schema AND k.table_name = c.table_name AND k.column_name = c.column_name
+                WHERE c.table_schema = current_schema() AND c.table_name = @table
+                ORDER BY c.ordinal_position
+                """;
+            AddParameter(command, "@table", tableName);
+            var postgresColumns = new List<DatabaseExplorerColumn>();
+            await using var postgresReader = await command.ExecuteReaderAsync();
+            while (await postgresReader.ReadAsync()) postgresColumns.Add(new DatabaseExplorerColumn
+            {
+                Name = postgresReader.GetString(0),
+                DeclaredType = postgresReader.IsDBNull(1) ? "" : postgresReader.GetString(1),
+                NotNull = postgresReader.GetBoolean(2),
+                PrimaryKeyOrder = postgresReader.GetInt32(3)
+            });
+            return postgresColumns;
+        }
         command.CommandText = $"PRAGMA table_info({Quote(tableName)})";
         var columns = new List<DatabaseExplorerColumn>();
         await using var reader = await command.ExecuteReaderAsync();
@@ -321,12 +370,13 @@ public sealed class DatabaseExplorerService(IDbContextFactory<AppDbContext> dbFa
     }
 
     private static async Task<Dictionary<string, string?>?> ReadRowAsync(DbConnection connection, string table,
-        List<DatabaseExplorerColumn> columns, List<DatabaseExplorerColumn> keys, Dictionary<string, string?> keyValues, DbTransaction? transaction = null)
+        List<DatabaseExplorerColumn> columns, List<DatabaseExplorerColumn> keys, Dictionary<string, string?> keyValues,
+        DbTransaction? transaction = null, bool postgres = false)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"SELECT {string.Join(", ", columns.Select(c => Quote(c.Name)))} FROM {Quote(table)} WHERE {string.Join(" AND ", keys.Select((c, i) => $"{Quote(c.Name)} IS $k{i}"))} LIMIT 1";
-        for (var i = 0; i < keys.Count; i++) AddParameter(command, "$k" + i, ParseValue(keyValues[keys[i].Name], keys[i]));
+        command.CommandText = $"SELECT {string.Join(", ", columns.Select(c => Quote(c.Name)))} FROM {Quote(table)} WHERE {string.Join(" AND ", keys.Select((c, i) => $"{Quote(c.Name)} {(postgres ? "IS NOT DISTINCT FROM" : "IS")} @k{i}"))} LIMIT 1";
+        for (var i = 0; i < keys.Count; i++) AddParameter(command, "@k" + i, ParseValue(keyValues[keys[i].Name], keys[i]));
         await using var reader = await command.ExecuteReaderAsync();
         if (!await reader.ReadAsync()) return null;
         var result = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
@@ -338,9 +388,20 @@ public sealed class DatabaseExplorerService(IDbContextFactory<AppDbContext> dbFa
     {
         if (string.IsNullOrWhiteSpace(text) && !column.NotNull) return DBNull.Value;
         var type = column.DeclaredType.ToUpperInvariant();
+        if (type.Contains("BOOL")) return bool.TryParse(text, out var boolean) ? boolean : throw new InvalidOperationException($"Η τιμή της στήλης {column.Name} πρέπει να είναι true ή false.");
         if (type.Contains("INT")) return long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var integer) ? integer : throw new InvalidOperationException($"Η τιμή της στήλης {column.Name} πρέπει να είναι ακέραιος αριθμός.");
         if (type.Contains("REAL") || type.Contains("FLOA") || type.Contains("DOUB")) return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var real) ? real : throw new InvalidOperationException($"Η τιμή της στήλης {column.Name} πρέπει να είναι αριθμός.");
         if (type.Contains("NUM") || type.Contains("DEC")) return decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out var number) ? number : throw new InvalidOperationException($"Η τιμή της στήλης {column.Name} πρέπει να είναι αριθμός.");
+        if (type.Contains("TIMESTAMP WITH TIME ZONE") || type.Contains("TIMESTAMPTZ"))
+            return DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var timestampOffset)
+                ? timestampOffset.ToUniversalTime()
+                : throw new InvalidOperationException($"Η τιμή της στήλης {column.Name} πρέπει να είναι ημερομηνία με ζώνη ώρας.");
+        if (type.Contains("TIMESTAMP") || type == "DATE")
+            return DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var timestamp)
+                ? DateTime.SpecifyKind(timestamp, DateTimeKind.Unspecified)
+                : throw new InvalidOperationException($"Η τιμή της στήλης {column.Name} πρέπει να είναι ημερομηνία.");
+        if (type == "UUID") return Guid.TryParse(text, out var uuid) ? uuid : throw new InvalidOperationException($"Η τιμή της στήλης {column.Name} πρέπει να είναι UUID.");
         return text ?? "";
     }
 
@@ -355,6 +416,47 @@ public sealed class DatabaseExplorerService(IDbContextFactory<AppDbContext> dbFa
 
     private static string EscapeLike(string text) => text.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
     private static string Quote(string identifier) => "\"" + identifier.Replace("\"", "\"\"") + "\"";
+
+    private static async Task QueueCloudSyncEventAsync(AppDbContext db, string tableName,
+        List<DatabaseExplorerColumn> keyColumns, Dictionary<string, string?> keys)
+    {
+        var metadata = db.Model.GetEntityTypes().FirstOrDefault(item =>
+            string.Equals(item.GetTableName(), tableName, StringComparison.Ordinal));
+        if (metadata is null || !CloudSyncEntityPolicy.TryGetProperties(metadata, out var allowedProperties)) return;
+
+        var orderedKeys = keyColumns.OrderBy(item => item.PrimaryKeyOrder).ToArray();
+        var idValues = orderedKeys.Select(column => ParseValue(keys[column.Name], column)).ToArray();
+        string entityId;
+        string payload;
+        if (metadata.HasSharedClrType)
+        {
+            entityId = string.Join(":", idValues.Select(value => Convert.ToString(value, CultureInfo.InvariantCulture)));
+            payload = JsonSerializer.Serialize(orderedKeys.ToDictionary(item => item.Name,
+                item => (object?)idValues[Array.IndexOf(orderedKeys, item)], StringComparer.Ordinal));
+        }
+        else
+        {
+            var entity = await db.FindAsync(metadata.ClrType, idValues, CancellationToken.None);
+            if (entity is null) return;
+            var entry = db.Entry(entity);
+            entityId = CloudSyncEntityPolicy.ReadEntityId(entry,
+                metadata.FindPrimaryKey()!.Properties.Select(item => item.Name).ToArray(), useOriginalValues: false);
+            payload = JsonSerializer.Serialize(CloudSyncEntityPolicy.ReadValues(entry, allowedProperties, useOriginalValues: false));
+        }
+
+        db.CloudSyncOutboxEvents.Add(new CloudSyncOutboxEvent
+        {
+            EventId = Guid.NewGuid(),
+            EntityType = CloudSyncEntityPolicy.EntityName(metadata),
+            EntityId = entityId,
+            EventType = "upsert",
+            SchemaVersion = 1,
+            OccurredAtUtc = DateTimeOffset.UtcNow,
+            PayloadJson = payload
+        });
+        db.SuppressCloudSyncCapture = true;
+        await db.SaveChangesAsync();
+    }
 
     private static void ValidateSingleSelect(string sql)
     {

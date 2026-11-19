@@ -51,6 +51,8 @@ services:
       Cloud__LicenseManagerPasswordFile: /run/secrets/license_manager_password
       Cloud__LicenseSigningPrivateKeyFile: /var/lib/restaurantorders/license-signing-private.pem
       Cloud__WebSyncTokenFile: /run/secrets/cloud_web_sync_token
+      Cloud__DatabaseAdminUser: ${POSTGRES_ADMIN_USER:-restaurant_cloud_admin}
+      Cloud__DatabaseAdminPasswordFile: /run/secrets/postgres_admin_password
       CloudWeb__Enabled: "true"
       Cloud__WebUpstream: http://cloud-web:8080
       Cloud__TrustedProxyAddresses: ${CLOUD_TRUSTED_PROXY_ADDRESSES:-}
@@ -67,6 +69,11 @@ services:
         mode: 0400
       - source: cloud_web_sync_token
         target: cloud_web_sync_token
+        uid: "1654"
+        gid: "1654"
+        mode: 0400
+      - source: postgres_admin_password
+        target: postgres_admin_password
         uid: "1654"
         gid: "1654"
         mode: 0400
@@ -88,13 +95,24 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_HTTP_PORTS: "8080"
+      TZ: Europe/Athens
       CloudWeb__Enabled: "true"
       CloudWeb__DataDirectory: /var/lib/restaurantorders/cloud-web
       CloudWeb__SyncBaseUrl: http://cloud-api:8080/
       CloudWeb__SyncTokenFile: /run/secrets/cloud_web_sync_token
+      CloudWeb__DatabaseHost: postgres
+      CloudWeb__DatabasePort: "5432"
+      CloudWeb__DatabaseName: ${POSTGRES_DB:-restaurant_cloud}
+      CloudWeb__DatabaseUser: ${CLOUD_APP_USER:-restaurant_cloud_app}
+      CloudWeb__DatabasePasswordFile: /run/secrets/cloud_app_password
     secrets:
       - source: cloud_web_sync_token
         target: cloud_web_sync_token
+        uid: "1654"
+        gid: "1654"
+        mode: 0400
+      - source: cloud_app_password
+        target: cloud_app_password
         uid: "1654"
         gid: "1654"
         mode: 0400
@@ -103,7 +121,10 @@ services:
     depends_on:
       cloud-api:
         condition: service_started
+      postgres:
+        condition: service_healthy
     networks:
+      - database
       - api-egress
 
 networks:

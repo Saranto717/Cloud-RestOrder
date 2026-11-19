@@ -62,6 +62,24 @@ builder.Services.AddRateLimiter(options => options.AddPolicy("license-manager-lo
         })));
 
 builder.Services.AddSingleton(_ => NpgsqlDataSource.Create(connectionString));
+if (cloudWebEnabled)
+{
+    var databaseAdminPassword = ReadConfiguredSecret(builder.Configuration, "Cloud:DatabaseAdminPassword", "Cloud:DatabaseAdminPasswordFile");
+    var databaseAdmin = new NpgsqlConnectionStringBuilder
+    {
+        Host = builder.Configuration["Cloud:DatabaseHost"] ?? "postgres",
+        Port = builder.Configuration.GetValue("Cloud:DatabasePort", 5432),
+        Database = builder.Configuration["Cloud:DatabaseName"] ?? "restaurant_cloud",
+        Username = builder.Configuration["Cloud:DatabaseAdminUser"] ?? "restaurant_cloud_admin",
+        Password = databaseAdminPassword,
+        Timeout = 15,
+        CommandTimeout = 30,
+        Pooling = true,
+        ApplicationName = "RestaurantOrders.CloudDatabaseProvisioner"
+    };
+    builder.Services.AddSingleton(new CloudTenantDatabaseAdmin(
+        databaseAdmin.ConnectionString, builder.Configuration["Cloud:DatabaseUser"] ?? "restaurant_cloud_app"));
+}
 builder.Services.AddSingleton<CloudDatabase>();
 builder.Services.AddSingleton<CloudPosDatabase>();
 builder.Services.AddSingleton<CloudSyncDeviceDatabase>();

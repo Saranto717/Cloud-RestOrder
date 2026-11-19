@@ -40,6 +40,17 @@ public static class CloudWebGateway
             return Results.Ok(await database.ReadActiveStoreIdsAsync(cancellationToken));
         });
 
+        app.MapPost("/api/internal/cloud-web/stores/{storeId:guid}/database", async (
+            Guid storeId, HttpRequest request, CloudDatabase database, CloudTenantDatabaseAdmin tenantDatabase,
+            CancellationToken cancellationToken) =>
+        {
+            if (!HasInternalBearer(request, sharedToken)) return Results.Unauthorized();
+            var activeStores = await database.ReadActiveStoreIdsAsync(cancellationToken);
+            if (!activeStores.Contains(storeId)) return Results.NotFound();
+            await tenantDatabase.EnsureStoreDatabaseAsync(storeId, cancellationToken);
+            return Results.Ok(new { database = CloudTenantDatabaseName.ForStore(storeId), status = "ready" });
+        });
+
         app.MapGet("/api/internal/cloud-web/stores/{storeId:guid}/entities", async (
             Guid storeId, long? afterId, int? limit, HttpRequest request, CloudDatabase database, CancellationToken cancellationToken) =>
         {
@@ -141,7 +152,7 @@ public static class CloudWebGateway
             if (!message.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray()))
                 message.Content?.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
         }
-        SetCloudHeaders(message.Headers, sharedToken, session);
+        SetCloudHeaders(message.Headers, sharedToken, session, context.Request.Host.Host);
         using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, context.RequestAborted);
         context.Response.StatusCode = (int)response.StatusCode;
         foreach (var header in response.Headers)
@@ -165,6 +176,7 @@ public static class CloudWebGateway
         client.Options.SetRequestHeader("X-Cloud-Email", session.Email);
         client.Options.SetRequestHeader("X-Cloud-Role", session.Role);
         client.Options.SetRequestHeader("X-Cloud-Internal-Token", sharedToken);
+        client.Options.SetRequestHeader("X-Cloud-External-Host", context.Request.Host.Host);
         var forwardedCookies = context.Request.Cookies
             .Where(cookie => !cookie.Key.Equals(SessionCookie, StringComparison.OrdinalIgnoreCase))
             .Select(cookie => $"{cookie.Key}={cookie.Value}");
@@ -196,13 +208,15 @@ public static class CloudWebGateway
         }
     }
 
-    private static void SetCloudHeaders(System.Net.Http.Headers.HttpRequestHeaders headers, string token, CloudPosSession session)
+    private static void SetCloudHeaders(System.Net.Http.Headers.HttpRequestHeaders headers, string token, CloudPosSession session,
+        string externalHost)
     {
         headers.TryAddWithoutValidation("X-Cloud-Internal-Token", token);
         headers.TryAddWithoutValidation("X-Cloud-Store-Id", session.StoreId.ToString("D"));
         headers.TryAddWithoutValidation("X-Cloud-User-Id", session.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         headers.TryAddWithoutValidation("X-Cloud-Email", session.Email);
         headers.TryAddWithoutValidation("X-Cloud-Role", session.Role);
+        headers.TryAddWithoutValidation("X-Cloud-External-Host", externalHost);
     }
 
     private static async Task<CloudPosSession?> ReadSessionAsync(HttpContext context, CloudPosDatabase database, bool refresh, CancellationToken cancellationToken)

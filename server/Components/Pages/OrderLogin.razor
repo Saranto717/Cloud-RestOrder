@@ -1,6 +1,7 @@
 @page "/order-login"
 @attribute [AllowAnonymous]
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject IConfiguration Configuration
 
 <div class="userpick-wrap staff-picker-wrap" style="@(backgroundImage is null ? "" : $"--welcome-image:url('{backgroundImage}')")">
     <div class="welcome-brand"><span class="welcome-brand-mark" aria-hidden="true">🍴</span>@displayName</div>
@@ -30,7 +31,14 @@
 
     @if (staff.Count == 0)
     {
-        <p class="hint">Δεν υπάρχουν ακόμα καταχωρημένοι χρήστες.</p>
+        @if (Configuration.GetValue<bool>("CloudWeb:Enabled"))
+        {
+            <p class="hint">Δεν υπάρχουν ακόμα χρήστες. Ο διαχειριστής μπορεί να δημιουργήσει τον πρώτο από τη <a href="/login">Διαχείριση</a>.</p>
+        }
+        else
+        {
+            <p class="hint">Δεν υπάρχουν ακόμα καταχωρημένοι χρήστες.</p>
+        }
     }
 
     <a class="admin-link nav-button" href="/">&larr; Πίσω</a>

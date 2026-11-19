@@ -2,6 +2,7 @@
 @layout RestaurantOrders.Components.Layout.MainLayout
 @rendermode InteractiveServer
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject AuthenticationStateProvider AuthStateProvider
 
 <div class="userpick-wrap staff-picker-wrap">
     <div class="staff-picker-heading">
@@ -27,7 +28,23 @@
                 </button>
             }
         </div>
-        @if (users.Count == 0)
+        @if (users.Count == 0 && CanBootstrapAdmin)
+        {
+            <div class="login-box">
+                <h3>Αρχικός διαχειριστής</h3>
+                <p>Δημιούργησε τον πρώτο χρήστη του καταστήματος.</p>
+                <form method="post" action="/api/bootstrap-admin">
+                    <label>Ονοματεπώνυμο</label>
+                    <input type="text" name="fullName" autocomplete="name" maxlength="120" required />
+                    <label>PIN τεσσάρων ψηφίων</label>
+                    <input type="password" name="pin" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" autocomplete="new-password" required />
+                    <label>Επιβεβαίωση PIN</label>
+                    <input type="password" name="pinConfirmation" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" autocomplete="new-password" required />
+                    <button type="submit">Δημιουργία και είσοδος</button>
+                </form>
+            </div>
+        }
+        else if (users.Count == 0)
         {
             <p class="hint">Δεν υπάρχει ακόμα κανένας διαχειριστής.</p>
         }
@@ -61,12 +78,17 @@
     public string? ReturnUrl { get; set; }
 
     private bool HasError => Error == "1";
+    private bool CanBootstrapAdmin { get; set; }
 
     private List<User> users = new();
     private User? selectedUser;
 
     protected override async Task OnInitializedAsync()
     {
+        var authentication = await AuthStateProvider.GetAuthenticationStateAsync();
+        var principal = authentication.User;
+        CanBootstrapAdmin = principal.Identity?.IsAuthenticated == true && principal.IsInRole("Store") &&
+            string.Equals(principal.FindFirst("cloud_user_role")?.Value, Role.Admin.ToString(), StringComparison.OrdinalIgnoreCase);
         using var db = await DbFactory.CreateDbContextAsync();
         users = await db.Users.Where(u => u.IsActive && !u.IsCloudIdentity && u.Role == Role.Admin).OrderBy(u => u.FirstName).ToListAsync();
     }
