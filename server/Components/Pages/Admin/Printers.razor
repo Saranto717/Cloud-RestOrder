@@ -5,7 +5,7 @@
 @inject PrinterService PrinterSvc
 
 <h2>Εκτυπωτές</h2>
-<p class="hint">Υποστηρίζονται δικτυακοί ESC/POS, USB ESC/POS μέσω ουράς Windows και ο ενσωματωμένος εκτυπωτής Sunmi. Στο Cloud POS, κάθε browser στέλνει τη δικτυακή εκτύπωση μέσω του server προς την IP/θύρα του εκτυπωτή· ο server πρέπει να έχει πρόσβαση στο δίκτυό του. Η USB εκτύπωση απαιτεί Windows POS/print bridge.</p>
+<p class="hint">Υποστηρίζονται δικτυακοί ESC/POS, USB ESC/POS μέσω ουράς Windows και ο ενσωματωμένος εκτυπωτής Sunmi. Στο Cloud POS, κάθε browser στέλνει την εκτύπωση μέσω ασφαλούς relay του cloud server προς την IP/θύρα του εκτυπωτή. Ο server πρέπει να βρίσκεται σε δίκτυο που φτάνει τον εκτυπωτή. Η USB εκτύπωση απαιτεί τοπικό Windows POS/print bridge.</p>
 
 <div class="admin-form" style="align-items:center;gap:9px">
     <input @bind="newName" placeholder="Όνομα (π.χ. Κουζίνα ή Sunmi V2)" />
