@@ -205,8 +205,9 @@ if (cloudWebMode)
                 !string.IsNullOrWhiteSpace(publicOrigin.Host))
             {
                 context.Request.Scheme = scheme.ToLowerInvariant();
-                context.Request.Host = new HostString(publicOrigin.Host,
-                    publicOrigin.IsDefaultPort ? -1 : publicOrigin.Port);
+                context.Request.Host = publicOrigin.IsDefaultPort
+                    ? new HostString(publicOrigin.Host)
+                    : new HostString(publicOrigin.Host, publicOrigin.Port);
             }
         }
 
