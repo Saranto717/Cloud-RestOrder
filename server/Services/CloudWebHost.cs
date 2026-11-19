@@ -263,7 +263,19 @@ public sealed class CloudTenantSyncWorker(
     {
         long cursor;
         await using (var db = await factory.CreateDbContextAsync(cancellationToken))
-            cursor = (await db.CloudSyncSettings.AsNoTracking().SingleAsync(item => item.Id == 1, cancellationToken)).LastCloudCursor;
+        {
+            db.SuppressCloudSyncCapture = true;
+            var settings = await db.CloudSyncSettings.SingleOrDefaultAsync(item => item.Id == 1, cancellationToken);
+            if (settings is null)
+            {
+                // Repair an already-created tenant database whose sync settings row
+                // is missing; without it the cloud replica can never pull its first page.
+                settings = new CloudSyncSettings { Id = 1 };
+                db.CloudSyncSettings.Add(settings);
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            cursor = settings.LastCloudCursor;
+        }
 
         for (var pageNumber = 0; pageNumber < 100; pageNumber++)
         {
