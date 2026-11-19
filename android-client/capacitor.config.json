@@ -1,6 +1,6 @@
 {
   "appId": "gr.restaurantorders.sunmiclient",
-  "appName": "RestaurantOrders SUNMI",
+  "appName": "RestaurantOrders",
   "webDir": "dist",
   "server": {
     "androidScheme": "http",

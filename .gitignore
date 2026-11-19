@@ -9,6 +9,7 @@
 **/obj/
 **/.vs/
 **/node_modules/
+/android-client/dist/
 **/.gradle/
 artifacts/
 *.zip

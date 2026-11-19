@@ -5679,18 +5679,31 @@
 
         using var db = await DbFactory.CreateDbContextAsync();
 
-        if (await CloudPrintAgent.ShouldQueueToWindowsAsync(db))
+        var activeItems = await db.OrderItems
+            .Include(oi => oi.MenuItem).ThenInclude(mi => mi!.MenuCategory).ThenInclude(c => c!.PrinterStations)
+            .Include(oi => oi.MenuItem).ThenInclude(mi => mi!.MenuCategory).ThenInclude(c => c!.PrinterStation)
+            .Where(oi => oi.OrderId == order.Id && oi.IsPrinted && !oi.IsCancelled)
+            .OrderBy(oi => oi.Id)
+            .ToListAsync();
+
+        if (!activeItems.Any())
         {
-            var activeIds = await db.OrderItems.Where(item => item.OrderId == order.Id && item.IsPrinted && !item.IsCancelled)
-                .Select(item => item.Id).ToArrayAsync();
-            if (activeIds.Length == 0)
-            {
-                statusMessage = "Δεν υπάρχουν ενεργά είδη για επανεκτύπωση.";
-                return;
-            }
-            var accepted = await db.OrderItems.Where(item => activeIds.Contains(item.Id))
-                .Include(item => item.MenuItem).ThenInclude(menu => menu!.MenuCategory)
-                .ToListAsync();
+            statusMessage = "Δεν υπάρχουν ενεργά είδη για επανεκτύπωση.";
+            return;
+        }
+
+        var withPrinter = activeItems
+            .SelectMany(oi => GetCategoryPrinters(oi.MenuItem?.MenuCategory)
+                .Where(station => station.PrintOrders)
+                .Select(station => new { Station = station, Item = oi }))
+            .GroupBy(x => x.Station)
+            .ToList();
+        var requiresWindowsUsbPrinter = withPrinter
+            .Any(group => string.Equals(group.Key.ConnectionType, "Usb", StringComparison.OrdinalIgnoreCase));
+
+        if (await CloudPrintAgent.ShouldQueueToWindowsAsync(db, requiresWindowsUsbPrinter))
+        {
+            var accepted = activeItems;
             var number = await db.OrderPrintBatches.Where(batch => batch.OrderId == order.Id)
                 .Select(batch => (int?)batch.Number).MaxAsync() ?? 0;
             var dailyNumber = await db.OrderPrintBatches.Where(batch => batch.OrderId == order.Id)
@@ -5711,26 +5724,7 @@
             return;
         }
 
-        var activeItems = await db.OrderItems
-            .Include(oi => oi.MenuItem).ThenInclude(mi => mi!.MenuCategory).ThenInclude(c => c!.PrinterStations)
-            .Include(oi => oi.MenuItem).ThenInclude(mi => mi!.MenuCategory).ThenInclude(c => c!.PrinterStation)
-            .Where(oi => oi.OrderId == order.Id && oi.IsPrinted && !oi.IsCancelled)
-            .OrderBy(oi => oi.Id)
-            .ToListAsync();
-
-        if (!activeItems.Any())
-        {
-            statusMessage = "Δεν υπάρχουν ενεργά είδη για επανεκτύπωση.";
-            return;
-        }
-
         var waiterUser = await db.Users.FindAsync(currentUserId);
-        var withPrinter = activeItems
-            .SelectMany(oi => GetCategoryPrinters(oi.MenuItem?.MenuCategory)
-                .Where(station => station.PrintOrders)
-                .Select(station => new { Station = station, Item = oi }))
-            .GroupBy(x => x.Station)
-            .ToList();
 
         if (!withPrinter.Any())
         {

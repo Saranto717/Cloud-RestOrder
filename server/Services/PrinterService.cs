@@ -252,6 +252,28 @@ public class PrinterService
 
         try
         {
+            var clientResult = await _js.InvokeAsync<string>("restaurantOrdersAndroidPrinter.printTcpRaw",
+                station.IpAddress, station.Port, Convert.ToBase64String(bytes), Math.Clamp(station.Copies, 1, 5));
+            if (string.Equals(clientResult, "printed", StringComparison.Ordinal))
+            {
+                _logger.LogInformation("Η εκτύπωση {Kind} στάλθηκε τοπικά από Android στη {Name} ({Ip}:{Port})",
+                    jobKind, station.Name, station.IpAddress, station.Port);
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            // A native client may have accepted the ticket before its reply was
+            // lost. Do not also send it from the cloud server and risk a duplicate.
+            _logger.LogError(ex, "Αποτυχία τοπικής Android εκτύπωσης στον {Name} ({Ip}:{Port})",
+                station.Name, station.IpAddress, station.Port);
+            LastPrintError = $"Android: {ex.Message}";
+            if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
+            return false;
+        }
+
+        try
+        {
             using var client = new TcpClient();
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await client.ConnectAsync(station.IpAddress, station.Port, timeout.Token);

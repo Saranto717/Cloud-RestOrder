@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.JSInterop;
 using RestaurantOrders.Data;
 
 namespace RestaurantOrders.Services;
@@ -6,12 +8,24 @@ namespace RestaurantOrders.Services;
 /// <summary>Chooses between an already-paired local Windows printer and cloud-side TCP/Android printing.</summary>
 public sealed class CloudPrintAgentResolver(IServiceProvider services, ILogger<CloudPrintAgentResolver> logger)
 {
-    public async Task<bool> ShouldQueueToWindowsAsync(AppDbContext db, CancellationToken cancellationToken = default)
+    public async Task<bool> ShouldQueueToWindowsAsync(
+        AppDbContext db,
+        bool requiresWindowsUsbPrinter = false,
+        CancellationToken cancellationToken = default)
     {
         if (!db.IsCloudHosted) return false;
 
         try
         {
+            var js = services.GetService<IJSRuntime>();
+            if (!requiresWindowsUsbPrinter
+                    && js is not null
+                    && await js.InvokeAsync<bool>("restaurantOrdersAndroidPrinter.isAvailable", cancellationToken))
+            {
+                logger.LogInformation("Using the current Android device as the local cloud printer bridge.");
+                return false;
+            }
+
             var authentication = services.GetService<AuthenticationStateProvider>();
             var postgres = services.GetService<CloudTenantPostgresDatabase>();
             var state = authentication is null ? null : await authentication.GetAuthenticationStateAsync();

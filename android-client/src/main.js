@@ -5,17 +5,17 @@ const app = document.querySelector('#app');
 const savedUrl = localStorage.getItem('restaurantorders-server-url') || '';
 
 app.innerHTML = `
-  <header class="topbar"><span class="mark">🍽</span><strong>RestaurantOrders</strong><span class="device">SUNMI V2</span></header>
+  <header class="topbar"><span class="mark">🍽</span><strong>RestaurantOrders</strong><span class="device">ANDROID POS</span></header>
   <section class="connection" id="connection">
     <div class="eyebrow">ΣΥΝΔΕΣΗ ΚΑΤΑΣΤΗΜΑΤΟΣ</div>
     <h1>Σύνδεση με το σύστημα</h1>
-    <p>Γράψε τη διεύθυνση του κεντρικού υπολογιστή στο ίδιο Wi‑Fi.</p>
+    <p>Συνδέσου στο Cloud POS του καταστήματος. Για δικτυακό ESC/POS, το Android στέλνει την εκτύπωση στον εκτυπωτή του τοπικού Wi‑Fi.</p>
     <form id="connectForm">
       <label for="serverUrl">Διεύθυνση server</label>
-      <input id="serverUrl" type="url" inputmode="url" placeholder="http://192.168.1.11:5080" value="${escapeAttr(savedUrl)}" required />
+      <input id="serverUrl" type="url" inputmode="url" placeholder="https://your-cloud-address/pos.html" value="${escapeAttr(savedUrl)}" required />
       <button class="primary" type="submit">Σύνδεση</button>
     </form>
-    <div class="printer-card"><span class="printer-icon">▤</span><div><strong>Ενσωματωμένος εκτυπωτής</strong><small id="printerStatus">Δεν έχει γίνει σύνδεση</small></div><button class="secondary" id="testPrinter" type="button">Δοκιμή</button></div>
+    <div class="printer-card"><span class="printer-icon">▤</span><div><strong>Ενσωματωμένος εκτυπωτής SUNMI</strong><small id="printerStatus">Προαιρετικός, μόνο σε συσκευές SUNMI</small></div><button class="secondary" id="testPrinter" type="button">Δοκιμή SUNMI</button></div>
     <div id="notice" class="notice" role="status"></div>
   </section>
   <section class="webapp hidden" id="webapp"><iframe id="restaurantFrame" title="RestaurantOrders"></iframe></section>

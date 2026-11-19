@@ -208,9 +208,24 @@ document.addEventListener('dragstart', function (event) {
 });
 
 
-// SUNMI V2 built-in printer bridge. Chrome cannot call the Android printer
-// service directly; the RestaurantOrders SUNMI Capacitor shell hosts this page
-// in an iframe and forwards print requests to the native SUNMI plugin.
+// Native Android network-printer bridge. A browser cannot open raw TCP sockets;
+// the RestaurantOrders Android WebView sends ESC/POS directly over the shop LAN.
+window.restaurantOrdersAndroidPrinter = {
+    isAvailable: () => {
+        const bridge = window.RestaurantOrdersAndroidNative || window.RestaurantOrdersSunmiNative;
+        return !!bridge && typeof bridge.printTcpRawBase64 === 'function';
+    },
+    printTcpRaw: (ipAddress, port, base64, copies) => {
+        const bridge = window.RestaurantOrdersAndroidNative || window.RestaurantOrdersSunmiNative;
+        if (typeof bridge?.printTcpRawBase64 !== 'function') return 'unavailable';
+
+        const response = JSON.parse(bridge.printTcpRawBase64(
+            String(ipAddress || ''), Number(port) || 0, String(base64 || ''), Number(copies) || 1));
+        if (!response.ok) throw new Error(response.error || 'Απέτυχε η τοπική εκτύπωση ESC/POS από το Android.');
+        return 'printed';
+    }
+};
+
 window.sunmiPrinter = (() => {
     const embedded = window.parent && window.parent !== window;
     const pending = new Map();
@@ -228,7 +243,7 @@ window.sunmiPrinter = (() => {
     }
 
     function requestHost(action, payload = {}) {
-        const nativeBridge = window.RestaurantOrdersSunmiNative;
+        const nativeBridge = window.RestaurantOrdersAndroidNative || window.RestaurantOrdersSunmiNative;
         if (nativeBridge) {
             try {
                 const raw = action === 'prepare'
@@ -242,12 +257,12 @@ window.sunmiPrinter = (() => {
             }
         }
         if (!embedded)
-            return Promise.reject(new Error('Για τον ενσωματωμένο εκτυπωτή, άνοιξε το RestaurantOrders από την εφαρμογή RestaurantOrders SUNMI.'));
+            return Promise.reject(new Error('Για τον ενσωματωμένο εκτυπωτή, άνοιξε το RestaurantOrders από την εφαρμογή RestaurantOrders σε συσκευή SUNMI.'));
         const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 pending.delete(requestId);
-                reject(new Error('Δεν απάντησε η γέφυρα εκτύπωσης SUNMI. Άνοιξε την εφαρμογή RestaurantOrders SUNMI και ξαναδοκίμασε.'));
+                reject(new Error('Δεν απάντησε η γέφυρα εκτύπωσης SUNMI. Άνοιξε την εφαρμογή RestaurantOrders σε συσκευή SUNMI και ξαναδοκίμασε.'));
             }, action === 'printRaw' ? 45000 : 15000);
             pending.set(requestId, { resolve, reject, timer });
             window.parent.postMessage({ source: 'restaurantorders-sunmi', requestId, action, ...payload }, '*');
