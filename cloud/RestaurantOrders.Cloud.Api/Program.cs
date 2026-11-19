@@ -68,7 +68,15 @@ builder.Services.AddSingleton<CloudSyncDeviceDatabase>();
 builder.Services.AddSingleton<CloudLicenseDatabase>();
 builder.Services.AddSingleton<CloudLicenseManagerDatabase>();
 builder.Services.AddSingleton(new LicenseSigner(licenseSigningPrivateKey));
-builder.Services.AddHttpClient("cloud-web-proxy", client => client.Timeout = Timeout.InfiniteTimeSpan);
+builder.Services.AddHttpClient("cloud-web-proxy", client => client.Timeout = Timeout.InfiniteTimeSpan)
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        // The browser must receive the app's 302 and secure staff cookie,
+        // then follow the redirect over the public HTTPS origin. Following it
+        // here would use the internal HTTP upstream and lose that secure cookie.
+        AllowAutoRedirect = false,
+        UseCookies = false
+    });
 
 var app = builder.Build();
 var forwardedOptions = new ForwardedHeadersOptions
