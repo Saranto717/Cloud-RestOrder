@@ -61,6 +61,7 @@ else
     builder.Services.AddSingleton<LocalDatabaseLocationService>();
 }
 builder.Services.AddScoped<PrinterService>();
+builder.Services.AddScoped<CloudPrintAgentResolver>();
 builder.Services.AddScoped<DatabaseExplorerService>();
 builder.Services.AddHttpClient("Parochos", client => client.Timeout = TimeSpan.FromSeconds(10));
 builder.Services.AddHttpClient("ePay-WebECR", client =>

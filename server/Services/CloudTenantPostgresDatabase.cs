@@ -94,4 +94,22 @@ public sealed class CloudTenantPostgresDatabase
         finally { tenantLock.Release(); }
     }
 
+    public async Task<bool> HasRegisteredPrintAgentAsync(Guid storeId, CancellationToken cancellationToken = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            new Uri(new Uri(_syncBaseUrl), $"api/internal/cloud-web/stores/{storeId:D}/print-agent"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _syncToken);
+        using var response = await _httpClientFactory.CreateClient().SendAsync(request, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            var detail = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            if (detail.Length > 800) detail = detail[..800];
+            throw new InvalidOperationException($"Cloud print-agent lookup failed with HTTP {(int)response.StatusCode}: {detail}");
+        }
+
+        await using var body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var document = await JsonDocument.ParseAsync(body, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return document.RootElement.TryGetProperty("hasWindowsPrintAgent", out var property) && property.GetBoolean();
+    }
+
 }

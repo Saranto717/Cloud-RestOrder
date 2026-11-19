@@ -5,12 +5,13 @@
 @inject PrinterService PrinterSvc
 
 <h2>Εκτυπωτές</h2>
-<p class="hint">Πρόσθεσε δικτυακό ESC/POS εκτυπωτή ή τον ενσωματωμένο εκτυπωτή Sunmi. Στον Sunmi, η δοκιμή σύνδεσης και εκτύπωσης πρέπει να γίνει ανοίγοντας αυτή την εφαρμογή από την ίδια τη συσκευή Sunmi.</p>
+<p class="hint">Υποστηρίζονται δικτυακοί ESC/POS, USB ESC/POS μέσω ουράς Windows και ο ενσωματωμένος εκτυπωτής Sunmi. Η USB εκτύπωση απαιτεί Windows POS/print bridge με εγκατεστημένο τον εκτυπωτή. Στον Sunmi, η δοκιμή πρέπει να γίνει από την ίδια τη συσκευή.</p>
 
 <div class="admin-form" style="align-items:center;gap:9px">
     <input @bind="newName" placeholder="Όνομα (π.χ. Κουζίνα ή Sunmi V2)" />
     <select @bind="newConnectionType" aria-label="Τύπος σύνδεσης εκτυπωτή">
         <option value="Tcp">Δικτυακός ESC/POS</option>
+        <option value="Usb">USB ESC/POS (Windows)</option>
         <option value="Sunmi">Ενσωματωμένος Sunmi</option>
     </select>
     @if (newConnectionType == "Tcp")
@@ -21,6 +22,15 @@
             <option value="PC737">Codepage: PC737</option>
             <option value="1253">Codepage: Windows-1253</option>
         </select>
+    }
+    else if (newConnectionType == "Usb")
+    {
+        <input @bind="newWindowsPrinterName" placeholder="Ακριβές όνομα ουράς στα Windows" style="min-width:250px" />
+        <select @bind="newCodepage">
+            <option value="PC737">Codepage: PC737</option>
+            <option value="1253">Codepage: Windows-1253</option>
+        </select>
+        <span class="hint">RAW ESC/POS μέσω Windows spooler. Δεν λειτουργεί απευθείας από το cloud χωρίς print bridge.</span>
     }
     else
     {
@@ -43,6 +53,7 @@
                 <td>
                     <select value="@p.ConnectionType" @onchange="e => UpdateConnectionType(p, e)">
                         <option value="Tcp">Δικτυακός</option>
+                        <option value="Usb">USB ESC/POS (Windows)</option>
                         <option value="Sunmi">Sunmi</option>
                     </select>
                 </td>
@@ -50,6 +61,10 @@
                     @if (p.ConnectionType == "Sunmi")
                     {
                         <span>Τοπικός εκτυπωτής συσκευής</span>
+                    }
+                    else if (p.ConnectionType == "Usb")
+                    {
+                        <input value="@p.WindowsPrinterName" @onchange="e => UpdateWindowsPrinterName(p, e)" aria-label="Όνομα ουράς Windows για εκτυπωτή @p.Name" placeholder="Ακριβές όνομα ουράς Windows" style="width:220px" />
                     }
                     else
                     {
@@ -63,7 +78,7 @@
                 </td>
                 <td><input value="@p.Copies" @onchange="e => UpdateField(p, e, (ent, v) => ent.Copies = ParseIntOr(v, 1))" style="width:55px" /></td>
                 <td>
-                    @if (p.ConnectionType == "Tcp")
+                    @if (p.ConnectionType is "Tcp" or "Usb")
                     {
                         <select value="@p.Codepage" @onchange="e => UpdateCodepage(p, e)">
                             <option value="PC737">PC737</option>
@@ -73,16 +88,7 @@
                     else { <span>UTF-8 / ESC-POS</span> }
                 </td>
                 <td><input value="@p.PaperWidthChars" @onchange="e => UpdateField(p, e, (ent, v) => ent.PaperWidthChars = ParseIntOr(v, 32))" style="width:60px" /></td>
-                <td>
-                    @if (p.ConnectionType == "Sunmi")
-                    {
-                        <button @onclick="() => TestPrint(p)">Σύνδεση / δοκιμή</button>
-                    }
-                    else
-                    {
-                        <button @onclick="() => TestPrint(p)">Σύνδεση / δοκιμή</button>
-                    }
-                </td>
+                <td><button @onclick="() => TestPrint(p)">Σύνδεση / δοκιμή</button></td>
                 <td><button class="danger" @onclick="() => Delete(p)">Διαγραφή</button></td>
             </tr>
         }
@@ -96,7 +102,7 @@
 
 @code {
     private List<PrinterStation> items = new();
-    private string newName = "", newIp = "";
+    private string newName = "", newIp = "", newWindowsPrinterName = "";
     private string newPort = "9100";
     private string newCopies = "1";
     private string newCodepage = "PC737";
@@ -122,7 +128,13 @@
     {
         if (string.IsNullOrWhiteSpace(newName)) return;
         var sunmi = newConnectionType == "Sunmi";
-        if (!sunmi && (string.IsNullOrWhiteSpace(newIp) || !System.Net.IPAddress.TryParse(newIp.Trim(), out _)))
+        var usb = newConnectionType == "Usb";
+        if (usb && string.IsNullOrWhiteSpace(newWindowsPrinterName))
+        {
+            statusMessage = "Για USB εκτυπωτή γράψε το ακριβές όνομα ουράς όπως εμφανίζεται στις Ρυθμίσεις εκτυπωτών των Windows.";
+            return;
+        }
+        if (!sunmi && !usb && (string.IsNullOrWhiteSpace(newIp) || !System.Net.IPAddress.TryParse(newIp.Trim(), out _)))
         {
             statusMessage = "Για δικτυακό εκτυπωτή χρειάζεται έγκυρη IP διεύθυνση.";
             return;
@@ -138,9 +150,10 @@
         db.PrinterStations.Add(new PrinterStation
         {
             Name = newName.Trim(),
-            ConnectionType = sunmi ? "Sunmi" : "Tcp",
-            IpAddress = sunmi ? "" : newIp.Trim(),
-            Port = sunmi ? 0 : port,
+            ConnectionType = sunmi ? "Sunmi" : usb ? "Usb" : "Tcp",
+            WindowsPrinterName = usb ? newWindowsPrinterName.Trim() : "",
+            IpAddress = sunmi || usb ? "" : newIp.Trim(),
+            Port = sunmi || usb ? 0 : port,
             Copies = ParseIntOr(newCopies, 1),
             Codepage = sunmi ? "UTF-8" : newCodepage,
             PaperWidthChars = sunmi ? Math.Min(ParseIntOr(newWidth, 32), 32) : ParseIntOr(newWidth, 42),
@@ -149,8 +162,13 @@
             IsActive = true
         });
         await db.SaveChangesAsync();
-        newName = ""; newIp = ""; newPort = "9100"; newCopies = "1"; newCodepage = "PC737"; newWidth = "42"; newConnectionType = "Tcp";
-        newPrintOrders = true; newPrintFiscalDocuments = true; statusMessage = "Ο εκτυπωτής προστέθηκε. Αν είναι Sunmi, κάνε τη δοκιμή από την ίδια τη συσκευή.";
+        newName = ""; newIp = ""; newWindowsPrinterName = ""; newPort = "9100"; newCopies = "1"; newCodepage = "PC737"; newWidth = "42"; newConnectionType = "Tcp";
+        newPrintOrders = true; newPrintFiscalDocuments = true;
+        statusMessage = usb
+            ? "Ο USB ESC/POS εκτυπωτής προστέθηκε. Η ουρά πρέπει να υπάρχει στα Windows του τοπικού print bridge."
+            : sunmi
+                ? "Ο εκτυπωτής Sunmi προστέθηκε. Κάνε τη δοκιμή από την ίδια τη συσκευή."
+                : "Ο δικτυακός εκτυπωτής προστέθηκε.";
         await Load();
     }
 
@@ -168,15 +186,29 @@
 
     private async Task UpdateConnectionType(PrinterStation p, ChangeEventArgs e)
     {
-        var value = e.Value?.ToString() == "Sunmi" ? "Sunmi" : "Tcp";
+        var value = e.Value?.ToString() switch { "Sunmi" => "Sunmi", "Usb" => "Usb", _ => "Tcp" };
         using var db = await DbFactory.CreateDbContextAsync();
         var entity = await db.PrinterStations.FindAsync(p.Id);
         if (entity is not null)
         {
             entity.ConnectionType = value;
-            if (value == "Sunmi") { entity.IpAddress = ""; entity.Port = 0; entity.Codepage = "UTF-8"; entity.PaperWidthChars = Math.Min(entity.PaperWidthChars, 32); }
-            else { entity.IpAddress = ""; entity.Port = 9100; entity.Codepage = "PC737"; entity.PaperWidthChars = 42; }
+            if (value == "Sunmi") { entity.IpAddress = ""; entity.Port = 0; entity.WindowsPrinterName = ""; entity.Codepage = "UTF-8"; entity.PaperWidthChars = Math.Min(entity.PaperWidthChars, 32); }
+            else if (value == "Usb") { entity.IpAddress = ""; entity.Port = 0; entity.WindowsPrinterName = ""; entity.Codepage = "PC737"; entity.PaperWidthChars = 42; }
+            else { entity.IpAddress = ""; entity.Port = 9100; entity.WindowsPrinterName = ""; entity.Codepage = "PC737"; entity.PaperWidthChars = 42; }
             await db.SaveChangesAsync();
+        }
+        await Load();
+    }
+
+    private async Task UpdateWindowsPrinterName(PrinterStation p, ChangeEventArgs e)
+    {
+        using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.PrinterStations.FindAsync(p.Id);
+        if (entity is not null)
+        {
+            entity.WindowsPrinterName = e.Value?.ToString()?.Trim() ?? "";
+            await db.SaveChangesAsync();
+            statusMessage = $"Το όνομα ουράς Windows του '{entity.Name}' ενημερώθηκε.";
         }
         await Load();
     }
@@ -212,6 +244,8 @@
             ? $"Η δοκιμαστική εκτύπωση στάλθηκε στον '{p.Name}'."
             : p.ConnectionType == "Sunmi"
                 ? $"Αποτυχία Sunmi: {PrinterSvc.LastTestError ?? "δεν υπάρχει σύνδεση με την τοπική υπηρεσία εκτύπωσης"}. Άνοιξε το σύστημα από την εφαρμογή RestaurantOrders SUNMI στη συσκευή."
+                : p.ConnectionType == "Usb"
+                    ? $"Αποτυχία USB ESC/POS: {PrinterSvc.LastTestError ?? "δεν ήταν δυνατή η αποστολή στην ουρά Windows"}. Η δοκιμή πρέπει να γίνει σε Windows POS/print bridge που έχει εγκατεστημένο τον εκτυπωτή."
                 : $"Απέτυχε η σύνδεση με τον εκτυπωτή '{p.Name}'. Έλεγξε IP/θύρα/δίκτυο.";
     }
 

@@ -220,6 +220,28 @@ public class PrinterService
             }
         }
 
+        if (string.Equals(station.ConnectionType, "Usb", StringComparison.OrdinalIgnoreCase))
+        {
+            if (jobKind == PrintJobKind.KitchenOrder && !station.PrintOrders) return true;
+            if (jobKind == PrintJobKind.FiscalDocument && !station.PrintFiscalDocuments) return true;
+
+            try
+            {
+                WindowsRawPrinter.Send(station.WindowsPrinterName, bytes, station.Copies);
+                _logger.LogInformation("Η εκτύπωση {Kind} στάλθηκε μέσω USB ESC/POS στην ουρά Windows {PrinterName} ({Name})",
+                    jobKind, station.WindowsPrinterName, station.Name);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Αποτυχία USB ESC/POS εκτύπωσης στον σταθμό {Name} / ουρά {PrinterName}",
+                    station.Name, station.WindowsPrinterName);
+                LastPrintError = ex.Message;
+                if (jobKind == PrintJobKind.Test) LastTestError = ex.Message;
+                return false;
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(station.IpAddress) || station.Port is <= 0 or > 65535)
         {
             LastPrintError = "Η διεύθυνση IP ή η θύρα του δικτυακού εκτυπωτή δεν είναι έγκυρη.";

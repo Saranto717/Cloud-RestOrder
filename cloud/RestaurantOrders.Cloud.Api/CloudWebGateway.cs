@@ -51,6 +51,13 @@ public static class CloudWebGateway
             return Results.Ok(new { database = databaseName, status = "ready" });
         });
 
+        app.MapGet("/api/internal/cloud-web/stores/{storeId:guid}/print-agent", async (
+            Guid storeId, HttpRequest request, CloudSyncDeviceDatabase devices, CancellationToken cancellationToken) =>
+        {
+            if (!HasInternalBearer(request, sharedToken)) return Results.Unauthorized();
+            return Results.Ok(new { hasWindowsPrintAgent = await devices.HasActiveDeviceAsync(storeId, cancellationToken) });
+        });
+
         app.MapGet("/api/internal/cloud-web/stores/{storeId:guid}/entities", async (
             Guid storeId, long? afterId, int? limit, HttpRequest request, CloudDatabase database, CancellationToken cancellationToken) =>
         {
