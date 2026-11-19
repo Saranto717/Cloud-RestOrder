@@ -7,7 +7,10 @@
     <AuthorizeView>
         <Authorized>
             <nav>
-                <div class="nav-links">
+                <button class="nav-toggle" type="button" aria-controls="main-nav-links" aria-expanded="@mobileNavOpen" @onclick="ToggleMobileNav">
+                    ☰ Μενού
+                </button>
+                <div id="main-nav-links" class="nav-links @(mobileNavOpen ? "is-open" : "")" @onclick="CloseMobileNav">
                 <AuthorizeView Roles="Waiter" Context="w">
                     @if (!Configuration.GetValue<bool>("Edition:TakeAwayOnly"))
                     {
@@ -69,6 +72,11 @@
 
 @code {
     private string displayName = "Παραγγελιοληψία";
+    private bool mobileNavOpen;
+
+    private void ToggleMobileNav() => mobileNavOpen = !mobileNavOpen;
+    private void CloseMobileNav() => mobileNavOpen = false;
+
     protected override async Task OnInitializedAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();

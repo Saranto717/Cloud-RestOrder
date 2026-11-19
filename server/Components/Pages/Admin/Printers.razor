@@ -5,7 +5,7 @@
 @inject PrinterService PrinterSvc
 
 <h2>Εκτυπωτές</h2>
-<p class="hint">Υποστηρίζονται δικτυακοί ESC/POS, USB ESC/POS μέσω ουράς Windows και ο ενσωματωμένος εκτυπωτής Sunmi. Η USB εκτύπωση απαιτεί Windows POS/print bridge με εγκατεστημένο τον εκτυπωτή. Στον Sunmi, η δοκιμή πρέπει να γίνει από την ίδια τη συσκευή.</p>
+<p class="hint">Υποστηρίζονται δικτυακοί ESC/POS, USB ESC/POS μέσω ουράς Windows και ο ενσωματωμένος εκτυπωτής Sunmi. Η δικτυακή δοκιμή από cloud POS γίνεται από τη συσκευή Android, εφόσον έχει ανοιχτεί μέσα από την εφαρμογή RestaurantOrders και βρίσκεται στο ίδιο τοπικό δίκτυο με τον εκτυπωτή. Η USB εκτύπωση απαιτεί Windows POS/print bridge.</p>
 
 <div class="admin-form" style="align-items:center;gap:9px">
     <input @bind="newName" placeholder="Όνομα (π.χ. Κουζίνα ή Sunmi V2)" />

@@ -8,6 +8,10 @@ import android.util.Base64;
 
 import org.json.JSONObject;
 
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -37,7 +41,7 @@ public final class SunmiNativePrinterBridge {
         try {
             Uri caller = Uri.parse(currentPageUrl());
             if (!"localhost".equalsIgnoreCase(caller.getHost()))
-                return result(false, "Η διεύθυνση server μπορεί να οριστεί μόνο από την εφαρμογή SUNMI.");
+                return result(false, "Η διεύθυνση server μπορεί να οριστεί μόνο από την εφαρμογή RestaurantOrders.");
 
             Uri target = Uri.parse(serverUrl == null ? "" : serverUrl.trim());
             String scheme = target.getScheme();
@@ -89,6 +93,34 @@ public final class SunmiNativePrinterBridge {
         }
     }
 
+    /** Send raw ESC/POS bytes from this Android device to a printer on its local network. */
+    @JavascriptInterface
+    public String printTcpRawBase64(String ipAddress, int port, String base64, int copies) {
+        try {
+            requireTrustedServerPage();
+            InetAddress address = parseLocalPrinterAddress(ipAddress);
+            if (port < 1 || port > 65535) throw new IllegalArgumentException("Η θύρα εκτυπωτή δεν είναι έγκυρη.");
+
+            byte[] bytes = Base64.decode(base64 == null ? "" : base64, Base64.DEFAULT);
+            if (bytes.length == 0) throw new IllegalArgumentException("Δεν υπάρχουν δεδομένα για εκτύπωση.");
+
+            int safeCopies = Math.max(1, Math.min(5, copies));
+            try (Socket socket = new Socket()) {
+                socket.connect(new InetSocketAddress(address, port), 5000);
+                socket.setSoTimeout(5000);
+                socket.setTcpNoDelay(true);
+                OutputStream output = socket.getOutputStream();
+                for (int i = 0; i < safeCopies; i++) output.write(bytes);
+                output.flush();
+                socket.shutdownOutput();
+            }
+            return result(true, "");
+        } catch (Exception ex) {
+            if (ex instanceof InterruptedException) Thread.currentThread().interrupt();
+            return result(false, message(ex));
+        }
+    }
+
     public void release() {
         if (!registered) return;
         try { printer.unregister(); } catch (Exception ignored) { }
@@ -114,7 +146,30 @@ public final class SunmiNativePrinterBridge {
     private void requireTrustedServerPage() {
         String current = currentPageUrl();
         if (allowedServerOrigin.isEmpty() || current == null || !allowedServerOrigin.equals(origin(Uri.parse(current))))
-            throw new SecurityException("Η εκτύπωση επιτρέπεται μόνο από τον server που έχει δηλωθεί στην εφαρμογή SUNMI.");
+            throw new SecurityException("Η εκτύπωση επιτρέπεται μόνο από τον server που έχει δηλωθεί στην εφαρμογή RestaurantOrders.");
+    }
+
+    private static InetAddress parseLocalPrinterAddress(String value) throws Exception {
+        String host = value == null ? "" : value.trim();
+        String[] octets = host.split("\\.", -1);
+        if (octets.length != 4) throw new IllegalArgumentException("Ο δικτυακός εκτυπωτής χρειάζεται τοπική IPv4 διεύθυνση.");
+
+        byte[] addressBytes = new byte[4];
+        for (int i = 0; i < octets.length; i++) {
+            if (octets[i].isEmpty() || octets[i].length() > 3) throw new IllegalArgumentException("Η IP διεύθυνση του εκτυπωτή δεν είναι έγκυρη.");
+            for (int j = 0; j < octets[i].length(); j++) {
+                if (!Character.isDigit(octets[i].charAt(j))) throw new IllegalArgumentException("Η IP διεύθυνση του εκτυπωτή δεν είναι έγκυρη.");
+            }
+            int number = Integer.parseInt(octets[i]);
+            if (number > 255) throw new IllegalArgumentException("Η IP διεύθυνση του εκτυπωτή δεν είναι έγκυρη.");
+            addressBytes[i] = (byte) number;
+        }
+
+        InetAddress address = InetAddress.getByAddress(addressBytes);
+        if (address.isAnyLocalAddress() || address.isLoopbackAddress() || address.isMulticastAddress()
+                || (!address.isSiteLocalAddress() && !address.isLinkLocalAddress()))
+            throw new IllegalArgumentException("Η IP πρέπει να ανήκει στο τοπικό δίκτυο του καταστήματος.");
+        return address;
     }
 
     private String currentPageUrl() {
@@ -153,7 +208,7 @@ public final class SunmiNativePrinterBridge {
 
     private static String message(Exception ex) {
         return ex.getMessage() == null || ex.getMessage().trim().isEmpty()
-                ? "Αποτυχία επικοινωνίας με τον εκτυπωτή SUNMI." : ex.getMessage();
+                ? "Αποτυχία επικοινωνίας με τον εκτυπωτή." : ex.getMessage();
     }
 
     private static final class NoopPrinterStatusCallback implements PrinterStatusCallback {

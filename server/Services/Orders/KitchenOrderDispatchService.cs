@@ -44,7 +44,11 @@ public sealed class KitchenOrderDispatchService(PrinterService printer, CloudPri
         var skipKitchenPrint = !tableService && companySettings?.TakeAwayReceiptOnly == true;
         var withPrinter = skipKitchenPrint ? new List<OrderItem>() : pending.Where(item => GetCategoryPrinters(item.MenuItem?.MenuCategory).Count > 0).ToList();
         var withoutPrinter = skipKitchenPrint ? new List<OrderItem>() : pending.Where(item => GetCategoryPrinters(item.MenuItem?.MenuCategory).Count == 0).ToList();
-        var queueToWindows = await printAgentResolver.ShouldQueueToWindowsAsync(db);
+        var requiresWindowsUsbPrinter = withPrinter
+            .SelectMany(item => GetCategoryPrinters(item.MenuItem?.MenuCategory))
+            .Any(station => string.Equals(station.ConnectionType, "Usb", StringComparison.OrdinalIgnoreCase));
+        var queueToWindows = await printAgentResolver.ShouldQueueToWindowsAsync(
+            db, requiresWindowsUsbPrinter);
         var dailyOrderNumber = queueToWindows ? 0 : await CashierService.ReserveNextOrderNumberAsync(db);
         var batchNumber = (await db.OrderPrintBatches
             .Where(batch => batch.OrderId == orderId)

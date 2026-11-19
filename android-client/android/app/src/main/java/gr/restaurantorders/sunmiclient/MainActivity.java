@@ -14,6 +14,8 @@ public class MainActivity extends BridgeActivity {
         if (getBridge() != null) {
             WebView webView = getBridge().getWebView();
             sunmiNativePrinterBridge = new SunmiNativePrinterBridge(this, webView);
+            webView.addJavascriptInterface(sunmiNativePrinterBridge, "RestaurantOrdersAndroidNative");
+            // Keep the old name for existing Sunmi-specific page integrations.
             webView.addJavascriptInterface(sunmiNativePrinterBridge, "RestaurantOrdersSunmiNative");
         }
     }
