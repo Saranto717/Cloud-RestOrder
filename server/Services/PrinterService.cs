@@ -1,6 +1,8 @@
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Globalization;
+using Microsoft.Extensions.Configuration;
 using Microsoft.JSInterop;
 using RestaurantOrders.Models;
 
@@ -18,6 +20,7 @@ public class PrinterService
 {
     private readonly ILogger<PrinterService> _logger;
     private readonly IJSRuntime _js;
+    private readonly bool _cloudWebMode;
     public string? LastTestError { get; private set; }
     /// <summary>
     /// Τελευταίο σφάλμα αποστολής προς εκτυπωτή στο τρέχον Blazor scope.
@@ -54,10 +57,11 @@ public class PrinterService
         Cp1253Encoding = Encoding.GetEncoding(1253);
     }
 
-    public PrinterService(ILogger<PrinterService> logger, IJSRuntime js)
+    public PrinterService(ILogger<PrinterService> logger, IJSRuntime js, IConfiguration configuration)
     {
         _logger = logger;
         _js = js;
+        _cloudWebMode = configuration.GetValue<bool>("CloudWeb:Enabled");
     }
 
     /// <summary>Επιστρέφει (byte κωδικού για ESC t n, .NET Encoding) ανάλογα με την επιλογή codepage του εκτυπωτή.</summary>
@@ -242,7 +246,7 @@ public class PrinterService
             }
         }
 
-        if (string.IsNullOrWhiteSpace(station.IpAddress) || station.Port is <= 0 or > 65535)
+        if (!IPAddress.TryParse(station.IpAddress?.Trim(), out var printerAddress) || station.Port is <= 0 or > 65535)
         {
             LastPrintError = "Η διεύθυνση IP ή η θύρα του δικτυακού εκτυπωτή δεν είναι έγκυρη.";
             _logger.LogWarning("Μη έγκυρες ρυθμίσεις εκτυπωτή {Name}: {Ip}:{Port}", station.Name, station.IpAddress, station.Port);
@@ -250,26 +254,45 @@ public class PrinterService
             return false;
         }
 
-        try
+        if (_cloudWebMode && !IsPrivateLanAddress(printerAddress))
         {
-            var clientResult = await _js.InvokeAsync<string>("restaurantOrdersAndroidPrinter.printTcpRaw",
-                station.IpAddress, station.Port, Convert.ToBase64String(bytes), Math.Clamp(station.Copies, 1, 5));
-            if (string.Equals(clientResult, "printed", StringComparison.Ordinal))
-            {
-                _logger.LogInformation("Η εκτύπωση {Kind} στάλθηκε τοπικά από Android στη {Name} ({Ip}:{Port})",
-                    jobKind, station.Name, station.IpAddress, station.Port);
-                return true;
-            }
-        }
-        catch (Exception ex)
-        {
-            // A native client may have accepted the ticket before its reply was
-            // lost. Do not also send it from the cloud server and risk a duplicate.
-            _logger.LogError(ex, "Αποτυχία τοπικής Android εκτύπωσης στον {Name} ({Ip}:{Port})",
-                station.Name, station.IpAddress, station.Port);
-            LastPrintError = $"Android: {ex.Message}";
+            LastPrintError = "Στο Cloud POS η διεύθυνση δικτυακού εκτυπωτή πρέπει να είναι ιδιωτική IP του καταστήματος.";
+            _logger.LogWarning("Απορρίφθηκε μη τοπική IP εκτυπωτή {Ip} για τον σταθμό {Name}.", station.IpAddress, station.Name);
             if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
             return false;
+        }
+
+        // A normal browser cannot open a raw TCP connection to a LAN printer.
+        // In cloud mode, the server is the print sender so every browser uses
+        // the same route; the Android bridge is only for locally hosted POS.
+        if (!_cloudWebMode)
+        {
+            try
+            {
+                var clientResult = await _js.InvokeAsync<string>("restaurantOrdersAndroidPrinter.printTcpRaw",
+                    station.IpAddress, station.Port, Convert.ToBase64String(bytes), Math.Clamp(station.Copies, 1, 5));
+                if (string.Equals(clientResult, "printed", StringComparison.Ordinal))
+                {
+                    _logger.LogInformation("Η εκτύπωση {Kind} στάλθηκε τοπικά από Android στη {Name} ({Ip}:{Port})",
+                        jobKind, station.Name, station.IpAddress, station.Port);
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                // A native client may have accepted the ticket before its reply was
+                // lost. Do not also send it from the server and risk a duplicate.
+                _logger.LogError(ex, "Αποτυχία τοπικής Android εκτύπωσης στον {Name} ({Ip}:{Port})",
+                    station.Name, station.IpAddress, station.Port);
+                LastPrintError = $"Android: {ex.Message}";
+                if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
+                return false;
+            }
+        }
+        else
+        {
+            _logger.LogInformation("Η εκτύπωση {Kind} προς {Name} ({Ip}:{Port}) αποστέλλεται από το Cloud POS.",
+                jobKind, station.Name, station.IpAddress, station.Port);
         }
 
         try
@@ -304,6 +327,24 @@ public class PrinterService
             if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
             return false;
         }
+    }
+
+    private static bool IsPrivateLanAddress(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6)
+            address = address.MapToIPv4();
+
+        var bytes = address.GetAddressBytes();
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+            return address.IsIPv6LinkLocal || (bytes[0] & 0xFE) == 0xFC;
+
+        if (address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+            return false;
+
+        return bytes[0] == 10 ||
+               (bytes[0] == 172 && bytes[1] is >= 16 and <= 31) ||
+               (bytes[0] == 192 && bytes[1] == 168) ||
+               (bytes[0] == 169 && bytes[1] == 254);
     }
 
     /// <summary>Μορφοποιεί ένα ποσό ως "12.34€" (χρησιμοποιείται σαν δεξιά στήλη).</summary>
