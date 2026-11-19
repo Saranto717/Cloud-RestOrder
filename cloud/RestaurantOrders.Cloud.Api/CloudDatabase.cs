@@ -68,13 +68,24 @@ public sealed class CloudDatabase(NpgsqlDataSource dataSource)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var command = new NpgsqlCommand("""
-            INSERT INTO cloud_stores (id, name, api_key_sha256)
-            VALUES (@id, @name, @api_key_sha256)
+            INSERT INTO cloud_stores (id, name, database_name, api_key_sha256)
+            VALUES (@id, @name, @database_name, @api_key_sha256)
             """, connection);
         command.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, storeId);
         command.Parameters.AddWithValue("name", NpgsqlDbType.Text, name);
+        command.Parameters.AddWithValue("database_name", NpgsqlDbType.Varchar, CloudTenantDatabaseName.ForStore(name, storeId));
         command.Parameters.AddWithValue("api_key_sha256", NpgsqlDbType.Bytea, tokenHash);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<string?> ReadStoreDatabaseNameAsync(Guid storeId, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("""
+            SELECT database_name FROM cloud_stores WHERE id = @id AND is_active = TRUE
+            """, connection);
+        command.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, storeId);
+        return await command.ExecuteScalarAsync(cancellationToken) as string;
     }
 
     public async Task<Guid?> FindActiveStoreIdAsync(byte[] tokenHash, CancellationToken cancellationToken)

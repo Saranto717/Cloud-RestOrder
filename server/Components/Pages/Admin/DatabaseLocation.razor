@@ -1,0 +1,91 @@
+@page "/admin/database-location"
+@attribute [Authorize(Roles = "Admin")]
+@inject IConfiguration Configuration
+@inject LocalDatabaseLocationService DatabaseLocationManager
+@inject DatabaseBackupService BackupManager
+
+<PageTitle>Θέση βάσης δεδομένων</PageTitle>
+
+<section class="database-location-page">
+    <p class="eyebrow">ΤΟΠΙΚΗ ΕΓΚΑΤΑΣΤΑΣΗ</p>
+    <h1>Βάση δεδομένων</h1>
+    @if (!Configuration.GetValue<bool>("Installation:Enabled"))
+    {
+        <p>Η αλλαγή θέσης είναι διαθέσιμη στις εγκαταστάσεις Windows που έχουν εγκατασταθεί με το Setup.</p>
+    }
+    else
+    {
+        <p>Η τοπική βάση είναι SQLite. Μπορείς να αλλάξεις τον φάκελο και το όνομα του αρχείου. Η εφαρμογή θα αντιγράψει με ασφάλεια τα δεδομένα και θα επανεκκινήσει για να ανοίξει τη νέα θέση.</p>
+        <div class="database-location-current"><strong>Ενεργή βάση</strong><code>@currentPath</code></div>
+        @if (!string.IsNullOrWhiteSpace(notice))
+        {
+            <div class="database-location-notice @(hasError ? "error" : "success")" role="status">@notice</div>
+        }
+        <EditForm Model="form" OnValidSubmit="SaveAsync">
+            <div class="database-location-fields">
+                <label>Φάκελος βάσης
+                    <InputText @bind-Value="form.Directory" placeholder="C:\RestaurantOrders\Data" />
+                </label>
+                <label>Όνομα αρχείου
+                    <InputText @bind-Value="form.FileName" placeholder="Το όνομα του καταστήματος.db" />
+                </label>
+            </div>
+            <p class="database-location-hint">Διάλεξε φάκελο στον οποίο έχει δικαίωμα εγγραφής η υπηρεσία RestaurantOrders. Θα παραμείνει αντίγραφο της παλιάς βάσης στον προηγούμενο φάκελο.</p>
+            <button type="submit" disabled="@saving">@(saving ? "Μεταφορά…" : "Μεταφορά βάσης και επανεκκίνηση")</button>
+        </EditForm>
+    }
+</section>
+
+<style>
+    .database-location-page{max-width:900px;margin:32px auto;padding:24px;color:#17243d;background:#fff;border:1px solid #dce4f2;border-radius:16px;box-shadow:0 8px 24px #233c6410}
+    .database-location-page h1{margin:4px 0 8px;font-size:28px}.database-location-page>p:not(.eyebrow){color:#687794;line-height:1.6}
+    .eyebrow{font-size:11px;letter-spacing:.14em;font-weight:800;color:#3c63dd;margin:0}
+    .database-location-current{display:grid;gap:8px;margin:18px 0;padding:14px;border:1px solid #dce4f2;border-radius:10px;background:#f6f8fc}
+    .database-location-current code{overflow-wrap:anywhere;color:#294da8}
+    .database-location-fields{display:grid;grid-template-columns:2fr 1fr;gap:14px}.database-location-fields label{display:grid;gap:7px;font-weight:700;font-size:13px}
+    .database-location-fields input{width:100%;box-sizing:border-box;border:1px solid #ccd7ea;border-radius:9px;padding:12px;font:inherit}
+    .database-location-hint{color:#75819a;font-size:13px;line-height:1.5}
+    .database-location-page button{border:0;border-radius:9px;background:#315bd8;color:#fff;padding:12px 18px;font:inherit;font-weight:800;cursor:pointer}.database-location-page button:disabled{opacity:.6;cursor:wait}
+    .database-location-notice{margin:14px 0;padding:12px;border-radius:9px}.database-location-notice.success{background:#e9f8ef;color:#167448}.database-location-notice.error{background:#fff0ef;color:#b42318}
+    @@media(max-width:650px){.database-location-fields{grid-template-columns:1fr}.database-location-page{margin:16px;padding:18px}}
+</style>
+
+@code {
+    private readonly DatabaseLocationForm form = new();
+    private string currentPath = "";
+    private string? notice;
+    private bool hasError;
+    private bool saving;
+
+    protected override void OnInitialized()
+    {
+        currentPath = DatabaseLocationManager.CurrentPath;
+        form.Directory = Path.GetDirectoryName(currentPath) ?? "";
+        form.FileName = Path.GetFileName(currentPath);
+    }
+
+    private async Task SaveAsync()
+    {
+        saving = true;
+        notice = null;
+        hasError = false;
+        try
+        {
+            var newPath = await DatabaseLocationManager.MoveDatabaseAsync(form.Directory, form.FileName);
+            notice = $"Η βάση μεταφέρθηκε στη θέση {newPath}. Η υπηρεσία επανεκκινείται τώρα. Τα δεδομένα παραμένουν και στο παλιό αρχείο ως αντίγραφο.";
+            BackupManager.RequestRestartForConfigurationChange();
+        }
+        catch (Exception exception)
+        {
+            hasError = true;
+            notice = exception.Message;
+        }
+        finally { saving = false; }
+    }
+
+    private sealed class DatabaseLocationForm
+    {
+        public string Directory { get; set; } = "";
+        public string FileName { get; set; } = "";
+    }
+}

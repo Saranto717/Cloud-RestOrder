@@ -15,8 +15,8 @@ public static class InstalledApplication
             var connection = new SqliteConnectionStringBuilder(builder.Configuration.GetConnectionString("Default") ?? "Data Source=restaurant.db");
             if (!string.IsNullOrWhiteSpace(connection.DataSource) && connection.DataSource != ":memory:")
             {
-                var databasePath = Path.GetFullPath(connection.DataSource);
-                DatabaseBackupService.ApplyPendingRestore(databasePath);
+                var developerDatabasePath = Path.GetFullPath(connection.DataSource);
+                DatabaseBackupService.ApplyPendingRestore(developerDatabasePath);
             }
             return null;
         }
@@ -25,11 +25,24 @@ public static class InstalledApplication
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "RestaurantOrders"));
         Directory.CreateDirectory(dataDirectory);
         builder.Configuration.AddJsonFile(Path.Combine(dataDirectory, "appsettings.Installed.json"), optional: true);
+        var configuredDatabaseDirectory = builder.Configuration["Database:Directory"];
+        var databaseDirectory = string.IsNullOrWhiteSpace(configuredDatabaseDirectory)
+            ? dataDirectory
+            : Path.IsPathRooted(configuredDatabaseDirectory)
+                ? Path.GetFullPath(configuredDatabaseDirectory)
+                : Path.GetFullPath(Path.Combine(dataDirectory, configuredDatabaseDirectory));
+        var databaseFileName = builder.Configuration["Database:FileName"] ?? "restaurant.db";
+        if (Path.GetFileName(databaseFileName) != databaseFileName ||
+            !string.Equals(Path.GetExtension(databaseFileName), ".db", StringComparison.OrdinalIgnoreCase) ||
+            databaseFileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            throw new InvalidOperationException("Η ρύθμιση του ονόματος SQLite βάσης δεν είναι έγκυρη.");
+        Directory.CreateDirectory(databaseDirectory);
+        var databasePath = Path.Combine(databaseDirectory, databaseFileName);
         builder.Configuration["ConnectionStrings:Default"] = new SqliteConnectionStringBuilder
         {
-            DataSource = Path.Combine(dataDirectory, "restaurant.db")
+            DataSource = databasePath
         }.ToString();
-        DatabaseBackupService.ApplyPendingRestore(Path.Combine(dataDirectory, "restaurant.db"));
+        DatabaseBackupService.ApplyPendingRestore(databasePath);
         // No developer HTTPS certificate or separate runtime installation is needed.
         if (string.IsNullOrWhiteSpace(builder.Configuration["Urls"]))
             builder.WebHost.UseUrls("http://0.0.0.0:5080");
@@ -57,7 +70,7 @@ public static class InstalledApplication
         try
         {
             var destination = config["data-directory"] ?? throw new ArgumentException("Missing data directory.");
-            ImportDatabase(source, destination);
+            ImportDatabase(source, destination, config["database-directory"], config["database-file-name"]);
         }
         catch (Exception ex)
         {
@@ -67,9 +80,16 @@ public static class InstalledApplication
         return true;
     }
 
-    public static void ImportDatabase(string sourcePath, string dataDirectory)
+    public static void ImportDatabase(string sourcePath, string dataDirectory, string? databaseDirectory = null, string? databaseFileName = null)
     {
-        var targetPath = Path.Combine(Path.GetFullPath(dataDirectory), "restaurant.db");
+        databaseDirectory = string.IsNullOrWhiteSpace(databaseDirectory) ? dataDirectory : databaseDirectory;
+        databaseFileName = string.IsNullOrWhiteSpace(databaseFileName) ? "restaurant.db" : databaseFileName;
+        if (Path.GetFileName(databaseFileName) != databaseFileName ||
+            !string.Equals(Path.GetExtension(databaseFileName), ".db", StringComparison.OrdinalIgnoreCase) ||
+            databaseFileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            throw new ArgumentException("Το όνομα SQLite βάσης δεν είναι έγκυρο.", nameof(databaseFileName));
+        var targetDirectory = Path.GetFullPath(databaseDirectory);
+        var targetPath = Path.Combine(targetDirectory, databaseFileName);
         if (File.Exists(targetPath)) throw new IOException("An installed database already exists; it will not be overwritten.");
         using var source = new SqliteConnection(new SqliteConnectionStringBuilder
         {
@@ -82,7 +102,7 @@ public static class InstalledApplication
             if (Convert.ToInt32(command.ExecuteScalar()) != 3)
                 throw new InvalidDataException("The selected file is not a RestaurantOrders database.");
         }
-        Directory.CreateDirectory(dataDirectory);
+        Directory.CreateDirectory(targetDirectory);
         var temporaryPath = targetPath + ".import-" + Guid.NewGuid().ToString("N");
         try
         {

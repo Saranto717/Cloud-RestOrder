@@ -5,7 +5,7 @@
   #define OutputDir "..\..\artifacts\installer"
 #endif
 #ifndef AppVersion
-  #define AppVersion "17.3.130"
+  #define AppVersion "17.3.131"
 #endif
 [Setup]
 AppId={{7A8E523B-37BA-40E2-A517-2DAD366A04E7}
@@ -73,6 +73,7 @@ greek.FinishedLabelNoIcons=Η εγκατάσταση του [name] ολοκλη�
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "Prepare-Service.ps1"; Flags: dontcopy
 Source: "ServiceSetup.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
+Source: "Read-Database-Location.ps1"; Flags: dontcopy
 Source: "RestaurantOrders.url"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Customer-Guide-EL.txt"; DestDir: "{app}"; Flags: ignoreversion
 
@@ -94,6 +95,8 @@ Type: files; Name: "{app}\Access.html"
 [Code]
 var
   DatabasePage: TInputFileWizardPage;
+  DatabaseDirectoryPage: TInputDirWizardPage;
+  DatabaseFilePage: TInputQueryWizardPage;
   EditionPage: TInputOptionWizardPage;
   ExistingTakeAwayOnly: Cardinal;
 
@@ -105,6 +108,10 @@ begin
 end;
 
 procedure InitializeWizard;
+var
+  ExitCode: Integer;
+  TempOutput: String;
+  LocationLines: TArrayOfString;
 begin
   EditionPage := CreateInputOptionPage(wpWelcome, 'Επιλογή έκδοσης',
     'Διάλεξε τις λειτουργίες που θα εμφανίζονται σε αυτή την εγκατάσταση',
@@ -115,20 +122,62 @@ begin
   if RegQueryDWordValue(HKLM64, 'Software\RestaurantOrders', 'TakeAwayOnly', ExistingTakeAwayOnly) and (ExistingTakeAwayOnly = 1) then
     EditionPage.SelectedValueIndex := 0;
 
-  DatabasePage := CreateInputFilePage(wpSelectDir, 'Υπάρχουσα βάση δεδομένων',
+  DatabaseDirectoryPage := CreateInputDirPage(wpSelectDir, 'Θέση τοπικής βάσης',
+    'Διάλεξε φάκελο για τη βάση του καταστήματος',
+    'Η βάση SQLite θα αποθηκευτεί εδώ. Η υπηρεσία RestaurantOrders χρειάζεται δικαίωμα εγγραφής στον φάκελο.', False, 'Νέος φάκελος');
+  DatabaseDirectoryPage.Add('Φάκελος βάσης δεδομένων:', ExpandConstant('{commonappdata}\RestaurantOrders'));
+
+  DatabaseFilePage := CreateInputQueryPage(DatabaseDirectoryPage.ID, 'Όνομα τοπικής βάσης',
+    'Δώσε ένα όνομα που να αναγνωρίζεις για το κατάστημα',
+    'Το πρόγραμμα θα προσθέσει το όνομα αυτό στη διαδρομή και θα χρησιμοποιεί την ίδια βάση μετά από κάθε επανεκκίνηση.');
+  DatabaseFilePage.Add('Όνομα αρχείου βάσης (.db):', 'restaurant.db');
+
+  DatabasePage := CreateInputFilePage(DatabaseFilePage.ID, 'Υπάρχουσα βάση δεδομένων',
     'Προαιρετική μεταφορά δεδομένων από προηγούμενη εγκατάσταση',
-    'Για νέα εγκατάσταση άφησε το πεδίο κενό. Για μεταφορά, επίλεξε την υπάρχουσα restaurant.db. Το αρχικό αρχείο διατηρείται.');
+    'Για νέα εγκατάσταση άφησε το πεδίο κενό. Για μεταφορά, επίλεξε την υπάρχουσα βάση SQLite. Το αρχικό αρχείο διατηρείται.');
   DatabasePage.Add('Βάση δεδομένων (προαιρετικά):', 'SQLite database|*.db|All files|*.*', '.db');
+
+  ExtractTemporaryFile('Read-Database-Location.ps1');
+  TempOutput := ExpandConstant('{tmp}\restaurantorders-database-location.txt');
+  if Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{tmp}\Read-Database-Location.ps1') +
+    '" -DataDirectory "' + ExpandConstant('{commonappdata}\RestaurantOrders') + '" -OutputFile "' + TempOutput + '"',
+    '', SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0) and
+    LoadStringsFromFile(LocationLines, TempOutput) and (GetArrayLength(LocationLines) >= 2) then
+  begin
+    DatabaseDirectoryPage.Values[0] := LocationLines[0];
+    DatabaseFilePage.Values[0] := LocationLines[1];
+  end
+  else
+  begin
+    if RegQueryStringValue(HKLM64, 'Software\RestaurantOrders', 'DatabaseDirectory', TempOutput) then
+      DatabaseDirectoryPage.Values[0] := TempOutput;
+    if RegQueryStringValue(HKLM64, 'Software\RestaurantOrders', 'DatabaseFileName', TempOutput) then
+      DatabaseFilePage.Values[0] := TempOutput;
+  end;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  Result := (PageID = DatabasePage.ID) and FileExists(ExpandConstant('{commonappdata}\RestaurantOrders\restaurant.db'));
+  Result := (PageID = DatabasePage.ID) and
+    FileExists(AddBackslash(DatabaseDirectoryPage.Values[0]) + DatabaseFilePage.Values[0]);
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
+  if (CurPageID = DatabaseDirectoryPage.ID) and (Trim(DatabaseDirectoryPage.Values[0]) = '') then
+  begin
+    MsgBox('Επίλεξε φάκελο για τη βάση δεδομένων.', mbError, MB_OK);
+    Result := False;
+  end;
+  if (CurPageID = DatabaseFilePage.ID) and
+    ((Trim(DatabaseFilePage.Values[0]) = '') or (ExtractFileName(DatabaseFilePage.Values[0]) <> DatabaseFilePage.Values[0]) or
+     (CompareText(ExtractFileExt(DatabaseFilePage.Values[0]), '.db') <> 0)) then
+  begin
+    MsgBox('Δώσε μόνο όνομα αρχείου που να τελειώνει σε .db, π.χ. Taverna.db.', mbError, MB_OK);
+    Result := False;
+  end;
   if (CurPageID = DatabasePage.ID) and (DatabasePage.Values[0] <> '') and not FileExists(DatabasePage.Values[0]) then
   begin
     MsgBox('Το επιλεγμένο αρχείο βάσης δεν βρέθηκε.', mbError, MB_OK);
@@ -157,7 +206,8 @@ begin
       Arguments := '-Action Install -Edition TakeAwayOnly -InstallDirectory "' + ExpandConstant('{app}') + '"'
     else
       Arguments := '-Action Install -Edition Full -InstallDirectory "' + ExpandConstant('{app}') + '"';
-    if not FileExists(ExpandConstant('{commonappdata}\RestaurantOrders\restaurant.db')) and (DatabasePage.Values[0] <> '') then
+    Arguments := Arguments + ' -DatabaseDirectory "' + DatabaseDirectoryPage.Values[0] + '" -DatabaseFileName "' + DatabaseFilePage.Values[0] + '"';
+    if not FileExists(AddBackslash(DatabaseDirectoryPage.Values[0]) + DatabaseFilePage.Values[0]) and (DatabasePage.Values[0] <> '') then
       Arguments := Arguments + ' -ImportDatabase "' + DatabasePage.Values[0] + '"';
     if not RunScript(ExpandConstant('{app}\installer\ServiceSetup.ps1'), Arguments, ExitCode) or (ExitCode <> 0) then
       RaiseException('Δεν ολοκληρώθηκε η εκκίνηση της υπηρεσίας. Δες C:\ProgramData\RestaurantOrders\installer-error.log και δοκίμασε ξανά το Setup.');

@@ -544,7 +544,8 @@ public sealed class CloudLicenseManagerDatabase(NpgsqlDataSource dataSource)
                    c.vat_number, l.edition_id, e.name, l.status, l.expires_at_utc,
                    l.max_installations, count(i.installation_id) FILTER (WHERE i.is_assigned), l.created_at_utc,
                    EXISTS(SELECT 1 FROM cloud_stores s WHERE s.license_id = l.id),
-                   (SELECT s.name FROM cloud_stores s WHERE s.license_id = l.id LIMIT 1)
+                   (SELECT s.name FROM cloud_stores s WHERE s.license_id = l.id LIMIT 1),
+                   (SELECT s.database_name FROM cloud_stores s WHERE s.license_id = l.id LIMIT 1)
             FROM cloud_licenses l
             JOIN cloud_license_customers c ON c.id = l.customer_id
             LEFT JOIN cloud_license_editions e ON e.id = l.edition_id
@@ -560,7 +561,7 @@ public sealed class CloudLicenseManagerDatabase(NpgsqlDataSource dataSource)
                     reader.IsDBNull(6) ? null : reader.GetGuid(6), reader.IsDBNull(7) ? null : reader.GetString(7),
                     reader.GetString(8), reader.IsDBNull(9) ? null : reader.GetDateTime(9), reader.GetInt32(10),
                     Convert.ToInt32(reader.GetInt64(11)), reader.GetDateTime(12), reader.GetBoolean(13),
-                    reader.IsDBNull(14) ? null : reader.GetString(14)));
+                    reader.IsDBNull(14) ? null : reader.GetString(14), reader.IsDBNull(15) ? null : reader.GetString(15)));
         }
 
         await using (var command = new NpgsqlCommand("""

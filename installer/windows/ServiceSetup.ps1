@@ -4,7 +4,9 @@
     [ValidateSet('Full', 'TakeAwayOnly')][string]$Edition = 'Full',
     [string]$LicenseServiceUrl = '',
     [string]$ImportDatabase = '',
-    [string]$DataDirectory = (Join-Path $env:ProgramData 'RestaurantOrders')
+    [string]$DataDirectory = (Join-Path $env:ProgramData 'RestaurantOrders'),
+    [string]$DatabaseDirectory = '',
+    [string]$DatabaseFileName = 'restaurant.db'
 )
 $ErrorActionPreference = 'Stop'
 $serviceName = 'RestaurantOrders'
@@ -37,6 +39,14 @@ try {
     }
 
     New-Item -ItemType Directory -Path $DataDirectory -Force | Out-Null
+    if ([string]::IsNullOrWhiteSpace($DatabaseDirectory)) { $DatabaseDirectory = $DataDirectory }
+    $DatabaseDirectory = [System.IO.Path]::GetFullPath($DatabaseDirectory)
+    if ([System.IO.Path]::GetFileName($DatabaseFileName) -ne $DatabaseFileName -or
+        ![string]::Equals([System.IO.Path]::GetExtension($DatabaseFileName), '.db', [System.StringComparison]::OrdinalIgnoreCase) -or
+        $DatabaseFileName.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0) {
+        throw 'The database file name must be a valid .db file name.'
+    }
+    New-Item -ItemType Directory -Path $DatabaseDirectory -Force | Out-Null
     # Localized Windows account names are avoided by using well-known SIDs.
     $acl = New-Object System.Security.AccessControl.DirectorySecurity
     $acl.SetAccessRuleProtection($true, $false)
@@ -49,12 +59,11 @@ try {
     Start-Transcript -Path (Join-Path $DataDirectory 'installer.log') -Append | Out-Null
     Stop-Application
 
-    $database = Join-Path $DataDirectory 'restaurant.db'
+    $database = Join-Path $DatabaseDirectory $DatabaseFileName
     if (Test-Path -LiteralPath $database) {
         $backup = Join-Path $DataDirectory ('Backups\before-update-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
         New-Item -ItemType Directory -Path $backup -Force | Out-Null
-        foreach ($name in @('restaurant.db', 'restaurant.db-wal', 'restaurant.db-shm', 'appsettings.Installed.json', 'DataProtection-Keys', 'installation.id', 'license-client-key.dpapi', 'license-client.token', 'license.json')) {
-            $item = Join-Path $DataDirectory $name
+        foreach ($item in @($database, ($database + '-wal'), ($database + '-shm'), (Join-Path $DataDirectory 'appsettings.Installed.json'), (Join-Path $DataDirectory 'DataProtection-Keys'), (Join-Path $DataDirectory 'installation.id'), (Join-Path $DataDirectory 'license-client-key.dpapi'), (Join-Path $DataDirectory 'license-client.token'), (Join-Path $DataDirectory 'license.json'))) {
             if (Test-Path -LiteralPath $item) { Copy-Item -LiteralPath $item -Destination $backup -Recurse }
         }
     }
@@ -62,7 +71,7 @@ try {
     $exe = Join-Path $InstallDirectory 'RestaurantOrders.exe'
     if ($ImportDatabase) {
         if (Test-Path -LiteralPath $database) { throw 'An installed database already exists. Import will not overwrite it.' }
-        & $exe "--import-database=$ImportDatabase" "--data-directory=$DataDirectory"
+        & $exe "--import-database=$ImportDatabase" "--data-directory=$DataDirectory" "--database-directory=$DatabaseDirectory" "--database-file-name=$DatabaseFileName"
         if ($LASTEXITCODE -ne 0) { throw 'The selected database could not be imported. The original file was not modified.' }
     }
 
@@ -78,6 +87,11 @@ try {
     if ($null -eq $configured.Edition) {
         $configured | Add-Member -MemberType NoteProperty -Name Edition -Value ([pscustomobject]@{})
     }
+    if ($null -eq $configured.Database) {
+        $configured | Add-Member -MemberType NoteProperty -Name Database -Value ([pscustomobject]@{})
+    }
+    $configured.Database | Add-Member -MemberType NoteProperty -Name Directory -Value $DatabaseDirectory -Force
+    $configured.Database | Add-Member -MemberType NoteProperty -Name FileName -Value $DatabaseFileName -Force
     if ($null -eq $configured.Edition.PSObject.Properties['TakeAwayOnly']) {
         $configured.Edition | Add-Member -MemberType NoteProperty -Name TakeAwayOnly -Value ($Edition -eq 'TakeAwayOnly')
     } else {
@@ -138,6 +152,18 @@ try {
     New-ItemProperty -Path 'HKLM:\Software\RestaurantOrders' -Name TakeAwayOnly -Value ([int]($Edition -eq 'TakeAwayOnly')) -PropertyType DWord -Force | Out-Null
     New-ItemProperty -Path 'HKLM:\Software\RestaurantOrders' -Name LicenseServiceUrl `
         -Value ([string]$configured.License.ServiceUrl) -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path 'HKLM:\Software\RestaurantOrders' -Name DatabaseDirectory `
+        -Value $DatabaseDirectory -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path 'HKLM:\Software\RestaurantOrders' -Name DatabaseFileName `
+        -Value $DatabaseFileName -PropertyType String -Force | Out-Null
+
+    if ($DatabaseDirectory -ne [System.IO.Path]::GetFullPath($DataDirectory)) {
+        $databaseAcl = Get-Acl -LiteralPath $DatabaseDirectory
+        $networkServiceSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-20')
+        $databaseAccess = New-Object System.Security.AccessControl.FileSystemAccessRule($networkServiceSid, 'Modify', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+        $databaseAcl.AddAccessRule($databaseAccess)
+        Set-Acl -LiteralPath $DatabaseDirectory -AclObject $databaseAcl
+    }
 
     Get-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     New-NetFirewallRule -Name $ruleName -DisplayName 'RestaurantOrders - Local network' -Direction Inbound -Action Allow `

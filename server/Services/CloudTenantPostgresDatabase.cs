@@ -2,6 +2,7 @@ using Npgsql;
 using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 
 namespace RestaurantOrders.Services;
 
@@ -16,7 +17,7 @@ public sealed class CloudTenantPostgresDatabase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly string _syncBaseUrl;
     private readonly string _syncToken;
-    private static readonly ConcurrentDictionary<Guid, byte> ProvisionedStores = new();
+    private static readonly ConcurrentDictionary<Guid, string> ProvisionedStores = new();
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> ProvisioningLocks = new();
 
     public CloudTenantPostgresDatabase(IConfiguration configuration, IHttpClientFactory httpClientFactory)
@@ -53,21 +54,23 @@ public sealed class CloudTenantPostgresDatabase
 
     public string GetConnectionString(Guid storeId)
     {
+        if (!ProvisionedStores.TryGetValue(storeId, out var databaseName))
+            throw new InvalidOperationException("Το όνομα της cloud βάσης δεν έχει ανακτηθεί από τον server.");
         var builder = new NpgsqlConnectionStringBuilder(_baseConnection.ConnectionString)
         {
-            Database = GetDatabaseName(storeId)
+            Database = databaseName
         };
         return builder.ConnectionString;
     }
 
-    public async Task EnsureDatabaseExistsAsync(Guid storeId, CancellationToken cancellationToken = default)
+    public async Task<string> EnsureDatabaseExistsAsync(Guid storeId, CancellationToken cancellationToken = default)
     {
-        if (ProvisionedStores.ContainsKey(storeId)) return;
+        if (ProvisionedStores.TryGetValue(storeId, out var existing)) return existing;
         var tenantLock = ProvisioningLocks.GetOrAdd(storeId, _ => new SemaphoreSlim(1, 1));
         await tenantLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (ProvisionedStores.ContainsKey(storeId)) return;
+            if (ProvisionedStores.TryGetValue(storeId, out existing)) return existing;
             using var request = new HttpRequestMessage(HttpMethod.Post,
                 new Uri(new Uri(_syncBaseUrl), $"api/internal/cloud-web/stores/{storeId:D}/database"));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _syncToken);
@@ -78,10 +81,17 @@ public sealed class CloudTenantPostgresDatabase
                 if (detail.Length > 800) detail = detail[..800];
                 throw new InvalidOperationException($"Cloud PostgreSQL database provisioning failed with HTTP {(int)response.StatusCode}: {detail}");
             }
-            ProvisionedStores.TryAdd(storeId, 0);
+            await using var body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            using var document = await JsonDocument.ParseAsync(body, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var databaseName = document.RootElement.TryGetProperty("database", out var databaseProperty)
+                ? databaseProperty.GetString() : null;
+            if (string.IsNullOrWhiteSpace(databaseName) || databaseName.Length > 63 ||
+                databaseName.Any(character => !(character is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '_')))
+                throw new InvalidOperationException("Ο server επέστρεψε μη έγκυρο όνομα cloud βάσης.");
+            ProvisionedStores[storeId] = databaseName;
+            return databaseName;
         }
         finally { tenantLock.Release(); }
     }
 
-    public static string GetDatabaseName(Guid storeId) => $"restaurant_store_{storeId:N}";
 }

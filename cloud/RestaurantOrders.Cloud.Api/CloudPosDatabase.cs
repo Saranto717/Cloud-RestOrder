@@ -17,7 +17,7 @@ public sealed record CloudPosBootstrap(
     IReadOnlyList<CloudPosEntity> MenuItems,
     IReadOnlyList<CloudPosEntity> Orders,
     IReadOnlyList<CloudPosEntity> OrderItems);
-public sealed record ManagedCloudStoreCreated(Guid StoreId, string Name, string ApiToken, int AdminUserId, string AdminEmail);
+public sealed record ManagedCloudStoreCreated(Guid StoreId, string Name, string DatabaseName, string ApiToken, int AdminUserId, string AdminEmail);
 
 public sealed class CloudPosDatabase(NpgsqlDataSource dataSource)
 {
@@ -28,6 +28,7 @@ public sealed class CloudPosDatabase(NpgsqlDataSource dataSource)
     {
         var storeId = Guid.NewGuid();
         var token = StoreTokens.Create();
+        var databaseName = CloudTenantDatabaseName.ForStore(name, storeId);
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await using (var license = new NpgsqlCommand("""
@@ -44,10 +45,11 @@ public sealed class CloudPosDatabase(NpgsqlDataSource dataSource)
                 throw new CloudPosConflictException("Η άδεια είναι ανενεργή, ληγμένη ή δεν υπάρχει.");
         }
 
-        await using (var store = new NpgsqlCommand("INSERT INTO cloud_stores(id,name,api_key_sha256,license_id) VALUES(@id,@name,@hash,@license_id)", connection, transaction))
+        await using (var store = new NpgsqlCommand("INSERT INTO cloud_stores(id,name,database_name,api_key_sha256,license_id) VALUES(@id,@name,@database_name,@hash,@license_id)", connection, transaction))
         {
             store.Parameters.AddWithValue("id", NpgsqlDbType.Uuid, storeId);
             store.Parameters.AddWithValue("name", NpgsqlDbType.Varchar, name);
+            store.Parameters.AddWithValue("database_name", NpgsqlDbType.Varchar, databaseName);
             store.Parameters.AddWithValue("hash", NpgsqlDbType.Bytea, StoreTokens.Hash(token));
             store.Parameters.AddWithValue("license_id", NpgsqlDbType.Uuid, licenseId);
             await store.ExecuteNonQueryAsync(cancellationToken);
@@ -65,7 +67,7 @@ public sealed class CloudPosDatabase(NpgsqlDataSource dataSource)
             userId = Convert.ToInt32(await user.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
         }
         await transaction.CommitAsync(cancellationToken);
-        return new ManagedCloudStoreCreated(storeId, name, token, userId, email);
+        return new ManagedCloudStoreCreated(storeId, name, databaseName, token, userId, email);
     }
 
     public async Task<CloudPosCredentials?> FindCredentialsAsync(string email, CancellationToken cancellationToken)
