@@ -602,7 +602,7 @@
 
       if (license.hasCloudStore) {
         title.append(element('span', 'badge', 'ΕΝΕΡΓΟ'));
-        section.append(title, element('p', 'helper', `Συνδεδεμένο Cloud POS: ${license.cloudStoreName || customer.shopName}. Η σύνδεση απενεργοποιείται μαζί με την άδεια.`));
+        section.append(title, element('p', 'helper', `Συνδεδεμένο Cloud POS: ${license.cloudStoreName || customer.shopName}. Βάση PostgreSQL: ${license.cloudDatabaseName || 'θα δημιουργηθεί στην πρώτη σύνδεση'}. Η σύνδεση απενεργοποιείται μαζί με την άδεια.`));
         return section;
       }
 
@@ -651,6 +651,7 @@
       head.append(title); modal.append(head);
       modal.append(element('p', 'danger-note', 'Το email και ο κωδικός διαχειριστή είναι τα στοιχεία σύνδεσης για τα tablet. Το παρακάτω token χρειάζεται μόνο για τη σύζευξη του Windows POS με τον server.'));
       modal.append(field('Email διαχειριστή', Object.assign(input('adminEmail', created.adminEmail || '', 'text'), { readOnly: true })));
+      modal.append(field('Βάση PostgreSQL καταστήματος', Object.assign(input('databaseName', created.databaseName || '', 'text'), { readOnly: true })));
       const token = input('apiToken', created.apiToken || '', 'text'); token.readOnly = true; token.autocomplete = 'off';
       const tokenField = field('Store API token (μία εμφάνιση)', token);
       const actions = element('div', 'modal-actions');

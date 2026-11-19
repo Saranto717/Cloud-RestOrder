@@ -83,7 +83,7 @@ public sealed record ManagedLicenseEditionView(Guid Id, string Name, int MaxInst
 public sealed record ManagedLicenseView(Guid Id, Guid CustomerId, string StoreIdentifier, string CustomerName,
     string ResellerName, string VatNumber, Guid? EditionId, string? EditionName, string Status,
     DateTime? ExpiresAtUtc, int MaxInstallations, int ActiveInstallations, DateTime CreatedAtUtc,
-    bool HasCloudStore = false, string? CloudStoreName = null);
+    bool HasCloudStore = false, string? CloudStoreName = null, string? CloudDatabaseName = null);
 public sealed record ManagedInstallationView(Guid InstallationId, string MachineName, DateTime FirstSeenAtUtc,
     DateTime LastSeenAtUtc, Guid? LicenseId, string? CustomerName, string? StoreIdentifier,
     string? LicenseStatus, bool IsAssigned, bool RebindPending);

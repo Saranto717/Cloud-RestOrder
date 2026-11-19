@@ -3436,7 +3436,7 @@
         using var db = await DbFactory.CreateDbContextAsync();
 
         var currentOrderNumber = await db.Database.SqlQueryRaw<long>(
-            "SELECT CurrentNumber AS Value FROM OrderNumberSequence WHERE Id = 1").FirstOrDefaultAsync();
+            "SELECT CurrentNumber AS \"Value\" FROM OrderNumberSequence WHERE Id = 1").FirstOrDefaultAsync();
         nextDailyOrderNumberPreview = checked((int)currentOrderNumber + 1);
 
 

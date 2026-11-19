@@ -45,10 +45,10 @@ public static class CloudWebGateway
             CancellationToken cancellationToken) =>
         {
             if (!HasInternalBearer(request, sharedToken)) return Results.Unauthorized();
-            var activeStores = await database.ReadActiveStoreIdsAsync(cancellationToken);
-            if (!activeStores.Contains(storeId)) return Results.NotFound();
-            await tenantDatabase.EnsureStoreDatabaseAsync(storeId, cancellationToken);
-            return Results.Ok(new { database = CloudTenantDatabaseName.ForStore(storeId), status = "ready" });
+            var databaseName = await database.ReadStoreDatabaseNameAsync(storeId, cancellationToken);
+            if (databaseName is null) return Results.NotFound();
+            await tenantDatabase.EnsureStoreDatabaseAsync(databaseName, cancellationToken);
+            return Results.Ok(new { database = databaseName, status = "ready" });
         });
 
         app.MapGet("/api/internal/cloud-web/stores/{storeId:guid}/entities", async (

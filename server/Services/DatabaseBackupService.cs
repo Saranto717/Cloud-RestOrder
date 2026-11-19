@@ -134,6 +134,9 @@ public sealed class DatabaseBackupService : BackgroundService
     }
 
     public void RequestRestartForRestore()
+        => RequestRestartForConfigurationChange();
+
+    public void RequestRestartForConfigurationChange()
     {
         _ = Task.Run(async () =>
         {

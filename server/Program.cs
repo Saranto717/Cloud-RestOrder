@@ -58,6 +58,7 @@ else
     builder.Services.AddHostedService<CloudSyncOutboxWorker>();
     builder.Services.AddSingleton<DatabaseBackupService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<DatabaseBackupService>());
+    builder.Services.AddSingleton<LocalDatabaseLocationService>();
 }
 builder.Services.AddScoped<PrinterService>();
 builder.Services.AddScoped<DatabaseExplorerService>();

@@ -244,7 +244,7 @@ public static class CashierService
         await using var transaction = await db.Database.BeginTransactionAsync();
         await db.Database.ExecuteSqlRawAsync("UPDATE OrderNumberSequence SET CurrentNumber = CurrentNumber + 1 WHERE Id = 1;");
         var number = await db.Database.SqlQueryRaw<long>(
-            "SELECT CurrentNumber AS Value FROM OrderNumberSequence WHERE Id = 1").SingleAsync();
+            "SELECT CurrentNumber AS \"Value\" FROM OrderNumberSequence WHERE Id = 1").SingleAsync();
         await transaction.CommitAsync();
         return checked((int)number);
     }
