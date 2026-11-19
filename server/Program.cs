@@ -183,6 +183,37 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
+// The Cloud API proxies this app from an internal Docker hostname. Restore the
+// public request origin from headers supplied by that authenticated gateway so
+// Blazor navigation and auth redirects never expose "cloud-web:8080" to users.
+if (cloudWebMode)
+{
+    app.Use(async (context, next) =>
+    {
+        var token = context.RequestServices.GetRequiredService<CloudWebInternalToken>();
+        if (token.Matches(context.Request.Headers["X-Cloud-Internal-Token"].ToString()))
+        {
+            var scheme = context.Request.Headers["X-Cloud-External-Scheme"].ToString();
+            var authority = context.Request.Headers["X-Cloud-External-Authority"].ToString();
+            if ((scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ||
+                 scheme.Equals("http", StringComparison.OrdinalIgnoreCase)) &&
+                Uri.TryCreate($"{scheme}://{authority}", UriKind.Absolute, out var publicOrigin) &&
+                string.IsNullOrWhiteSpace(publicOrigin.UserInfo) &&
+                publicOrigin.AbsolutePath == "/" &&
+                string.IsNullOrEmpty(publicOrigin.Query) &&
+                string.IsNullOrEmpty(publicOrigin.Fragment) &&
+                !string.IsNullOrWhiteSpace(publicOrigin.Host))
+            {
+                context.Request.Scheme = scheme.ToLowerInvariant();
+                context.Request.Host = new HostString(publicOrigin.Host,
+                    publicOrigin.IsDefaultPort ? -1 : publicOrigin.Port);
+            }
+        }
+
+        await next();
+    });
+}
+
 app.UseStaticFiles();
 
 // The SUNMI Capacitor app hosts this server in an iframe from its local
