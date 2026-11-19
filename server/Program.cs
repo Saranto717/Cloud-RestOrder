@@ -39,6 +39,7 @@ builder.Services.AddHttpClient<RemoteLicenseClient>(client => client.Timeout = T
 builder.Services.Configure<CloudSyncOptions>(builder.Configuration.GetSection("CloudSync"));
 builder.Services.AddSingleton<CloudSyncRuntimeState>();
 builder.Services.AddSingleton<CloudSyncCredentialProtector>();
+builder.Services.AddSingleton<CloudSyncInitialSnapshotSeeder>();
 if (cloudWebMode)
 {
     builder.Services.AddHttpContextAccessor();
@@ -54,7 +55,6 @@ else
         options.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=restaurant.db"));
     builder.Services.AddHostedService<RemoteLicenseSyncWorker>();
     builder.Services.AddHttpClient(nameof(CloudSyncOutboxWorker), client => client.Timeout = TimeSpan.FromSeconds(20));
-    builder.Services.AddSingleton<CloudSyncInitialSnapshotSeeder>();
     builder.Services.AddHostedService<CloudSyncOutboxWorker>();
     builder.Services.AddSingleton<DatabaseBackupService>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<DatabaseBackupService>());
