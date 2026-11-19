@@ -5,7 +5,7 @@
 @inject PrinterService PrinterSvc
 
 <h2>Εκτυπωτές</h2>
-<p class="hint">Υποστηρίζονται δικτυακοί ESC/POS, USB ESC/POS μέσω ουράς Windows και ο ενσωματωμένος εκτυπωτής Sunmi. Η δικτυακή δοκιμή από cloud POS γίνεται από τη συσκευή Android, εφόσον έχει ανοιχτεί μέσα από την εφαρμογή RestaurantOrders και βρίσκεται στο ίδιο τοπικό δίκτυο με τον εκτυπωτή. Η USB εκτύπωση απαιτεί Windows POS/print bridge.</p>
+<p class="hint">Υποστηρίζονται δικτυακοί ESC/POS, USB ESC/POS μέσω ουράς Windows και ο ενσωματωμένος εκτυπωτής Sunmi. Στο Cloud POS, κάθε browser στέλνει τη δικτυακή εκτύπωση μέσω του server προς την IP/θύρα του εκτυπωτή· ο server πρέπει να έχει πρόσβαση στο δίκτυό του. Η USB εκτύπωση απαιτεί Windows POS/print bridge.</p>
 
 <div class="admin-form" style="align-items:center;gap:9px">
     <input @bind="newName" placeholder="Όνομα (π.χ. Κουζίνα ή Sunmi V2)" />
@@ -246,7 +246,7 @@
                 ? $"Αποτυχία Sunmi: {PrinterSvc.LastTestError ?? "δεν υπάρχει σύνδεση με την τοπική υπηρεσία εκτύπωσης"}. Άνοιξε το σύστημα από την εφαρμογή RestaurantOrders SUNMI στη συσκευή."
                 : p.ConnectionType == "Usb"
                     ? $"Αποτυχία USB ESC/POS: {PrinterSvc.LastTestError ?? "δεν ήταν δυνατή η αποστολή στην ουρά Windows"}. Η δοκιμή πρέπει να γίνει σε Windows POS/print bridge που έχει εγκατεστημένο τον εκτυπωτή."
-                : $"Απέτυχε η σύνδεση με τον εκτυπωτή '{p.Name}'. Έλεγξε IP/θύρα/δίκτυο.";
+                : $"Απέτυχε η σύνδεση με τον εκτυπωτή '{p.Name}': {PrinterSvc.LastTestError ?? "Έλεγξε IP/θύρα/δίκτυο."}";
     }
 
     private async Task Delete(PrinterStation p)
