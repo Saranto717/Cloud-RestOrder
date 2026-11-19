@@ -145,7 +145,7 @@ begin
     '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{tmp}\Read-Database-Location.ps1') +
     '" -DataDirectory "' + ExpandConstant('{commonappdata}\RestaurantOrders') + '" -OutputFile "' + TempOutput + '"',
     '', SW_HIDE, ewWaitUntilTerminated, ExitCode) and (ExitCode = 0) and
-    LoadStringsFromFile(LocationLines, TempOutput) and (GetArrayLength(LocationLines) >= 2) then
+    LoadStringsFromFile(TempOutput, LocationLines) and (GetArrayLength(LocationLines) >= 2) then
   begin
     DatabaseDirectoryPage.Values[0] := LocationLines[0];
     DatabaseFilePage.Values[0] := LocationLines[1];
