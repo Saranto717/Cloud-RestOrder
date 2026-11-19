@@ -100,6 +100,7 @@ services:
       CloudWeb__DataDirectory: /var/lib/restaurantorders/cloud-web
       CloudWeb__SyncBaseUrl: http://cloud-api:8080/
       CloudWeb__SyncTokenFile: /run/secrets/cloud_web_sync_token
+      CloudWeb__PrintBridgeUrl: http://host.docker.internal:18082/
       CloudWeb__DatabaseHost: postgres
       CloudWeb__DatabasePort: "5432"
       CloudWeb__DatabaseName: ${POSTGRES_DB:-restaurant_cloud}
@@ -118,6 +119,8 @@ services:
         mode: 0400
     volumes:
       - cloud-web-data:/var/lib/restaurantorders/cloud-web
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       cloud-api:
         condition: service_started
@@ -126,6 +129,22 @@ services:
     networks:
       - database
       - api-egress
+
+  cloud-print-bridge:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER:-saranto717}/cloud-restorder-web:${CLOUD_IMAGE_TAG:-latest}
+    pull_policy: always
+    restart: unless-stopped
+    entrypoint: ["dotnet", "/app/print-bridge/CloudPrintBridge.dll"]
+    network_mode: host
+    environment:
+      ASPNETCORE_HTTP_PORTS: "18082"
+      CloudPrintBridge__TokenFile: /run/secrets/cloud_web_sync_token
+    secrets:
+      - source: cloud_web_sync_token
+        target: cloud_web_sync_token
+        uid: "1654"
+        gid: "1654"
+        mode: 0400
 
 networks:
   database:

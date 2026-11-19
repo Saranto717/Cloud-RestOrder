@@ -36,6 +36,7 @@ builder.Host.UseWindowsService(options => options.ServiceName = "RestaurantOrder
 
 builder.Services.AddSingleton(_ => new LicenseService(installedDataDirectory, builder.Configuration));
 builder.Services.AddHttpClient<RemoteLicenseClient>(client => client.Timeout = TimeSpan.FromSeconds(8));
+builder.Services.AddHttpClient("CloudPrintBridge", client => client.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.Configure<CloudSyncOptions>(builder.Configuration.GetSection("CloudSync"));
 builder.Services.AddSingleton<CloudSyncRuntimeState>();
 builder.Services.AddSingleton<CloudSyncCredentialProtector>();
