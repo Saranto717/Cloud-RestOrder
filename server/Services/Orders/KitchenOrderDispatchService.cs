@@ -19,7 +19,7 @@ public sealed record KitchenOrderDispatchResult(
 /// Owns kitchen/bar dispatch, print-batch numbering and the order items' sent state.
 /// It deliberately has no fiscal-provider dependency.
 /// </summary>
-public sealed class KitchenOrderDispatchService(PrinterService printer)
+public sealed class KitchenOrderDispatchService(PrinterService printer, CloudPrintAgentResolver printAgentResolver)
 {
     public async Task<KitchenOrderDispatchResult> DispatchPendingAsync(
         AppDbContext db,
@@ -44,7 +44,8 @@ public sealed class KitchenOrderDispatchService(PrinterService printer)
         var skipKitchenPrint = !tableService && companySettings?.TakeAwayReceiptOnly == true;
         var withPrinter = skipKitchenPrint ? new List<OrderItem>() : pending.Where(item => GetCategoryPrinters(item.MenuItem?.MenuCategory).Count > 0).ToList();
         var withoutPrinter = skipKitchenPrint ? new List<OrderItem>() : pending.Where(item => GetCategoryPrinters(item.MenuItem?.MenuCategory).Count == 0).ToList();
-        var dailyOrderNumber = db.IsCloudHosted ? 0 : await CashierService.ReserveNextOrderNumberAsync(db);
+        var queueToWindows = await printAgentResolver.ShouldQueueToWindowsAsync(db);
+        var dailyOrderNumber = queueToWindows ? 0 : await CashierService.ReserveNextOrderNumberAsync(db);
         var batchNumber = (await db.OrderPrintBatches
             .Where(batch => batch.OrderId == orderId)
             .MaxAsync(batch => (int?)batch.Number) ?? 0) + 1;
@@ -63,14 +64,14 @@ public sealed class KitchenOrderDispatchService(PrinterService printer)
             DailyNumber = dailyOrderNumber,
             CreatedAt = DateTime.Now,
             DispatchNotificationPending = tableService,
-            WindowsPrintPending = db.IsCloudHosted,
+            WindowsPrintPending = queueToWindows,
             AcceptedTableName = tableName,
             AcceptedOrderComment = orderComment,
             AcceptedLinesJson = System.Text.Json.JsonSerializer.Serialize(pending.Select(AcceptedOrderLine.From)),
             Items = pending
         };
         db.OrderPrintBatches.Add(batch);
-        if (db.IsCloudHosted)
+        if (queueToWindows)
         {
             foreach (var item in pending)
             {

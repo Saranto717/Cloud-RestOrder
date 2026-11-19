@@ -89,6 +89,10 @@ public static class DataSeeder
             );
             CREATE INDEX IF NOT EXISTS ix_databaseeditaudit_at ON databaseeditaudit (at);
             """);
+        db.Database.ExecuteSqlRaw("""
+            ALTER TABLE "PrinterStations"
+            ADD COLUMN IF NOT EXISTS "WindowsPrinterName" text NOT NULL DEFAULT '';
+            """);
     }
 
     private static void EnsureCloudSyncOutboxSchema(AppDbContext db)
@@ -143,6 +147,7 @@ public static class DataSeeder
     private static void EnsurePrinterStationSchema(AppDbContext db)
     {
         AddColumnIfMissing(db, "PrinterStations", "ConnectionType", "TEXT NOT NULL DEFAULT 'Tcp'");
+        AddColumnIfMissing(db, "PrinterStations", "WindowsPrinterName", "TEXT NOT NULL DEFAULT ''");
         AddColumnIfMissing(db, "PrinterStations", "PrintOrders", "INTEGER NOT NULL DEFAULT 1");
         AddColumnIfMissing(db, "PrinterStations", "PrintFiscalDocuments", "INTEGER NOT NULL DEFAULT 1");
     }

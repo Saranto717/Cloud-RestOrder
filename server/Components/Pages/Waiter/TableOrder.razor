@@ -16,6 +16,7 @@
 @inject IFiscalDocumentService Fiscal
 @inject FiscalOrderFormService FiscalOrderForms
 @inject KitchenOrderDispatchService KitchenOrderDispatch
+@inject CloudPrintAgentResolver CloudPrintAgent
 @inject InventoryService Inventory
 @inject TableTransferService Transfers
 @inject EpayWebEcrService Epay
@@ -5596,7 +5597,7 @@
             }
 
             FiscalOrderFormDispatchResult? fiscalDispatch = null;
-            var pendingFiscalOnWindows = cloudHosted && !isTakeAwayMode && dispatch.SubmittedItems.Count > 0;
+            var pendingFiscalOnWindows = dispatch.PendingOnWindows && !isTakeAwayMode && dispatch.SubmittedItems.Count > 0;
             if (!cloudHosted && !isTakeAwayMode && dispatch.SubmittedItems.Count > 0)
             {
                 try
@@ -5678,7 +5679,7 @@
 
         using var db = await DbFactory.CreateDbContextAsync();
 
-        if (db.IsCloudHosted)
+        if (await CloudPrintAgent.ShouldQueueToWindowsAsync(db))
         {
             var activeIds = await db.OrderItems.Where(item => item.OrderId == order.Id && item.IsPrinted && !item.IsCancelled)
                 .Select(item => item.Id).ToArrayAsync();

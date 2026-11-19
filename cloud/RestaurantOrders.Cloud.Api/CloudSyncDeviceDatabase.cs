@@ -10,6 +10,19 @@ public sealed record RegisterSyncDeviceRequest(string? InstallationId, string? D
 
 public sealed class CloudSyncDeviceDatabase(NpgsqlDataSource dataSource)
 {
+    public async Task<bool> HasActiveDeviceAsync(Guid storeId, CancellationToken cancellationToken)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("""
+            SELECT EXISTS (
+                SELECT 1 FROM cloud_sync_devices
+                WHERE store_id=@store_id AND is_active=TRUE
+            )
+            """, connection);
+        command.Parameters.AddWithValue("store_id", NpgsqlDbType.Uuid, storeId);
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
     public async Task<Guid?> FindActiveStoreIdAsync(Guid installationId, CancellationToken cancellationToken)
     {
         await using var connection = await dataSource.OpenConnectionAsync(cancellationToken);

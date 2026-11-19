@@ -4,7 +4,8 @@ public class PrinterStation
 {
     public int Id { get; set; }
     public string Name { get; set; } = "";      // π.χ. "Κουζίνα", "Μπαρ"
-    public string ConnectionType { get; set; } = "Tcp"; // Tcp ή Sunmi (τοπικός εκτυπωτής Android)
+    public string ConnectionType { get; set; } = "Tcp"; // Tcp, Usb (Windows spooler) ή Sunmi (Android)
+    public string WindowsPrinterName { get; set; } = ""; // Όνομα ουράς Windows για USB ESC/POS
     public bool PrintOrders { get; set; } = true;
     public bool PrintFiscalDocuments { get; set; } = true;
     public string IpAddress { get; set; } = ""; // π.χ. 192.168.1.50
