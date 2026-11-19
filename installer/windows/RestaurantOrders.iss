@@ -125,12 +125,14 @@ begin
   DatabaseDirectoryPage := CreateInputDirPage(wpSelectDir, 'Θέση τοπικής βάσης',
     'Διάλεξε φάκελο για τη βάση του καταστήματος',
     'Η βάση SQLite θα αποθηκευτεί εδώ. Η υπηρεσία RestaurantOrders χρειάζεται δικαίωμα εγγραφής στον φάκελο.', False, 'Νέος φάκελος');
-  DatabaseDirectoryPage.Add('Φάκελος βάσης δεδομένων:', ExpandConstant('{commonappdata}\RestaurantOrders'));
+  DatabaseDirectoryPage.Add('Φάκελος βάσης δεδομένων:');
+  DatabaseDirectoryPage.Values[0] := ExpandConstant('{commonappdata}\RestaurantOrders');
 
   DatabaseFilePage := CreateInputQueryPage(DatabaseDirectoryPage.ID, 'Όνομα τοπικής βάσης',
     'Δώσε ένα όνομα που να αναγνωρίζεις για το κατάστημα',
     'Το πρόγραμμα θα προσθέσει το όνομα αυτό στη διαδρομή και θα χρησιμοποιεί την ίδια βάση μετά από κάθε επανεκκίνηση.');
-  DatabaseFilePage.Add('Όνομα αρχείου βάσης (.db):', 'restaurant.db');
+  DatabaseFilePage.Add('Όνομα αρχείου βάσης (.db):', False);
+  DatabaseFilePage.Values[0] := 'restaurant.db';
 
   DatabasePage := CreateInputFilePage(DatabaseFilePage.ID, 'Υπάρχουσα βάση δεδομένων',
     'Προαιρετική μεταφορά δεδομένων από προηγούμενη εγκατάσταση',
