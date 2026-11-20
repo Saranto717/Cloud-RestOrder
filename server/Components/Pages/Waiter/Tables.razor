@@ -189,6 +189,61 @@
     .pending-fiscal-footer { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:14px 18px; border-top:1px solid #e8edf4; background:#f8fafc; }
     .pending-fiscal-footer span { color:#64748b; font-size:.85rem; }
     @@media(max-width:600px) { .pending-fiscal-launch { left:12px; right:12px; bottom:calc(12px + env(safe-area-inset-bottom)); justify-content:center; } .pending-fiscal-row { grid-template-columns:1fr; } .pending-fiscal-actions,.pending-fiscal-row button { width:100%; } .pending-fiscal-footer { align-items:stretch; flex-direction:column; } }
+
+    /* Compact table board for portrait phones and small tablets. */
+    .tables-page .waiter-topbar > .linkbtn-plain,
+    .tables-page .waiter-topbar > .hint,
+    .tables-page .waiter-topbar-main p.hint { display:none !important; }
+    @@media (max-width: 820px) {
+        .tables-page {
+            display: flex !important;
+            flex-direction: column;
+            width: 100% !important;
+            height: 100% !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            padding: 8px !important;
+            overflow: hidden !important;
+        }
+        .tables-page .waiter-topbar { flex: 0 0 auto; align-items: center; gap: 7px; margin: 0 0 6px; padding: 7px 9px; border-radius: 13px; }
+        .tables-page .waiter-topbar-main { flex: 1 1 100%; align-items: center; flex-direction: row; gap: 8px; }
+        .tables-page .waiter-topbar-main h2 { margin: 0; font-size: clamp(1rem, 4vw, 1.25rem); }
+        .tables-page .takeaway-start-btn { flex: 0 0 auto; width: auto; min-height: 40px; justify-content: center; gap: 6px; padding: 5px 9px; border-radius: 11px; }
+        .tables-page .takeaway-start-icon { width: 28px; height: 28px; flex-basis: 28px; border-radius: 9px; font-size: 16px; }
+        .tables-page .takeaway-start-btn small { display: none; }
+        .tables-page .tile-scale-control { flex: 0 0 auto; gap: 4px; padding: 3px 5px; }
+        .tables-page .tile-scale-control button { width: 30px; height: 30px; border-radius: 8px; }
+        .tables-page .tile-scale-label { display: none; }
+        .tables-page .category-tabs { flex: 0 0 auto; max-width: 100%; gap: 6px; margin: 0 0 6px; padding-bottom: 5px; overflow-x: auto; }
+        .tables-page .cat-tab { flex: 0 0 auto; min-width: 0; min-height: 38px; padding: 7px 10px; border-radius: 10px; font-size: .8rem; }
+        .tables-page .floorplan-view { flex: 0 0 auto; height: min(34dvh, 280px); min-height: 145px; margin: 0 0 7px; border-radius: 14px; }
+        .tables-page .table-area-list { display: flex !important; flex: 1 1 0; flex-direction: column; min-height: 0 !important; gap: 7px; overflow-x: hidden; overflow-y: auto !important; }
+        .tables-page .table-area-section { flex: 0 0 auto; min-height: 0; padding: 6px; border-radius: 13px; }
+        .tables-page .table-area-section h3 { margin: 0 0 5px 3px; font-size: .9rem; }
+        .tables-page .table-strip-scroll { padding: 0; overflow-x: hidden; overflow-y: visible; }
+        .tables-page .table-grid.table-strip {
+            display: grid;
+            grid-auto-flow: row;
+            grid-auto-rows: minmax(74px, auto) !important;
+            grid-template-columns: repeat(auto-fill, minmax(min(100%, 112px), 1fr)) !important;
+            grid-template-rows: none !important;
+            width: 100% !important;
+            min-height: 0;
+            gap: 6px;
+        }
+        .tables-page .table-strip .table-btn { width: auto !important; height: auto !important; min-height: 74px !important; padding: 7px 6px; border-radius: 11px; }
+        .tables-page .table-strip .table-btn .tname { font-size: .95rem; }
+        .tables-page .table-strip .table-btn .tamount { margin-top: 3px; padding: 2px 7px; font-size: .75rem; }
+        .tables-page > h3 { flex: 0 0 auto; margin: 3px 2px; font-size: .88rem; }
+    }
+    @@media (max-width: 420px) {
+        .tables-page .waiter-topbar { flex-wrap: nowrap; }
+        .tables-page .waiter-topbar-main { flex: 1 1 auto; min-width: 0; }
+        .tables-page .waiter-topbar-main h2 { font-size: .98rem; }
+        .tables-page .takeaway-start-btn { padding: 5px 7px; font-size: .76rem; }
+        .tables-page .tile-scale-control .tile-scale-value { min-width: 34px; font-size: .75rem; }
+        .tables-page .tile-scale-control button { width: 27px; height: 27px; }
+    }
 </style>
 
 <div class="tables-page @(venueImage is null ? "" : "has-venue-image")" style="--tables-bg:@pageBackground;--venue-image:url('@venueImage')" @oncontextmenu="OpenBackgroundMenu" @oncontextmenu:preventDefault="true">
@@ -198,7 +253,7 @@
         <div class="waiter-topbar-main">
           <div>
             <h2><span class="table-heading-icon" aria-hidden="true">@(TakeAwayOnlyEdition ? "🥡" : "🪑")</span> @(TakeAwayOnlyEdition ? "Take Away" : "Επιλογή Τραπεζιού")</h2>
-            <p class="hint">@(TakeAwayOnlyEdition ? "Ανοίγει αυτόματα νέα παραγγελία Take Away." : "Πάτησε σε τραπέζι για παραγγελία. Για αλλαγές εμφάνισης, ενεργοποίησε πρώτα τη διαχείριση εμφάνισης.")</p>
+            <p class="hint">@(TakeAwayOnlyEdition ? "Ανοίγει αυτόματα νέα παραγγελία Take Away." : "Πάτησε σε τραπέζι για να ξεκινήσεις παραγγελία.")</p>
           </div>
           @if (!transferMode)
           {

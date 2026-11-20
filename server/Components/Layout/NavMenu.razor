@@ -1,81 +1,103 @@
+@implements IDisposable
 @inject IConfiguration Configuration
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject NavigationManager Navigation
 
 <div class="topbar">
-    <span class="brand">🍽️ @displayName</span>
+    <span class="brand"><span aria-hidden="true">🍽️</span> @displayName</span>
 
-    <AuthorizeView>
+    <AuthorizeView Roles="Admin" Context="adminUser">
+        @if (IsAdminArea)
+        {
+            <button class="admin-sidebar-toggle" type="button" aria-controls="admin-sidebar" aria-expanded="false" data-admin-sidebar-toggle="true">
+                <span aria-hidden="true">☰</span><span>Μενού</span>
+            </button>
+        }
+    </AuthorizeView>
+
+    <AuthorizeView Context="authUser">
         <Authorized>
-            <nav>
-                <button class="nav-toggle" type="button" aria-controls="main-nav-links" aria-expanded="false" data-nav-toggle="true">
-                    ☰ Μενού
-                </button>
-                <div id="main-nav-links" class="nav-links">
-                <AuthorizeView Roles="Waiter" Context="w">
-                    @if (!Configuration.GetValue<bool>("Edition:TakeAwayOnly"))
-                    {
-                        <a href="/waiter">Τραπέζια</a>
-                    }
-                    else if (!w.User.IsInRole("Admin"))
-                    {
-                        <a href="/waiter">🥡 Take Away</a>
-                    }
-                </AuthorizeView>
-
-                <AuthorizeView Roles="Admin" Context="a">
-                    @if (!Configuration.GetValue<bool>("Edition:TakeAwayOnly"))
-                    {
-                    <a href="/admin/tables">Τραπέζια</a>
-                    <a href="/admin/floorplan">Κάτοψη</a>
-                    }
-                    else
-                    {
-                    <a href="/waiter">🥡 Take Away</a>
-                    }
-                    <a href="/admin/printers">Εκτυπωτές</a>
-                    <a href="/admin/categories">Κατηγορίες</a>
-                    <a href="/admin/menu">Κατάλογος</a>
-                    <a href="/admin/extras">Extra</a>
-                    <a href="/admin/reports">Αναφορές</a>
-                    <a href="/admin/database-search">Αναζήτηση Βάσης</a>
-                    <a href="/admin/backoffice">Backoffice · Αποθήκη</a>
-                    <a href="/admin/fiscal-settings">Παραστατικά</a>
-                    <a href="/admin/appearance">Εμφάνιση</a>
-                    <a href="/admin/bank-pos">Τραπεζικά POS</a>
-                    <a href="/admin/issued-documents" data-testid="nav-issued-documents">Εκδοθείσες Αποδείξεις</a>
-                    <a href="/admin/parochos-history">Ιστορικό Parochos</a>
-                    <a href="/admin/reprint">Επανεκτύπωση</a>
-                    @if (!Configuration.GetValue<bool>("CloudWeb:Enabled"))
-                    {
-                        <a href="/admin/backups">Backup / Επαναφορά</a>
-                        <a href="/admin/database-location">Θέση βάσης</a>
-                        <a href="/admin/cloud-sync">Σύνδεση Cloud</a>
-                    }
-                    <a href="/admin/users">Χρήστες</a>
-                    @if (!Configuration.GetValue<bool>("CloudWeb:Enabled"))
-                    {
-                        <a href="/license">Άδεια χρήσης</a>
-                    }
-                </AuthorizeView>
-
-                </div>
-                <div class="nav-actions">
-                <span class="userinfo">@context.User.Identity?.Name</span>
-                <form method="post" action="/api/logout" style="display:inline">
+            <div class="nav-actions">
+                <span class="userinfo">@authUser.User.Identity?.Name</span>
+                <form method="post" action="/api/logout">
                     <button type="submit" class="linkbtn">Αποσύνδεση</button>
                 </form>
-                </div>
-            </nav>
+            </div>
         </Authorized>
+    </AuthorizeView>
+
+    <AuthorizeView Roles="Admin" Context="adminMenu">
+        @if (IsAdminArea)
+        {
+            <button type="button" class="admin-sidebar-backdrop" aria-label="Κλείσιμο μενού" data-admin-sidebar-backdrop="true"></button>
+            <aside id="admin-sidebar" class="admin-sidebar" aria-label="Επεξεργασία προγράμματος">
+                <div class="admin-sidebar-heading">
+                    <span class="admin-sidebar-eyebrow">ΧΩΡΟΣ ΔΙΑΧΕΙΡΙΣΗΣ</span>
+                    <strong>Επεξεργασία προγράμματος</strong>
+                </div>
+                <nav class="admin-nav">
+                    <span class="admin-nav-caption">Επισκόπηση</span>
+                    <a href="/admin" class="admin-nav-link @(IsActive("/admin") ? "active" : "")"><span aria-hidden="true">▦</span> Αρχική διαχείρισης</a>
+
+                    <span class="admin-nav-caption">Οργάνωση καταστήματος</span>
+                    @if (!Configuration.GetValue<bool>("Edition:TakeAwayOnly"))
+                    {
+                        <a href="/admin/tables" class="admin-nav-link @(IsActive("/admin/tables") ? "active" : "")"><span aria-hidden="true">▤</span> Τραπέζια & περιοχές</a>
+                        <a href="/admin/floorplan" class="admin-nav-link @(IsActive("/admin/floorplan") ? "active" : "")"><span aria-hidden="true">⌖</span> Κάτοψη</a>
+                    }
+                    <a href="/admin/menu" class="admin-nav-link @(IsActive("/admin/menu") ? "active" : "")"><span aria-hidden="true">☷</span> Κατάλογος</a>
+                    <a href="/admin/categories" class="admin-nav-link @(IsActive("/admin/categories") ? "active" : "")"><span aria-hidden="true">▦</span> Κατηγορίες</a>
+                    <a href="/admin/extras" class="admin-nav-link @(IsActive("/admin/extras") ? "active" : "")"><span aria-hidden="true">＋</span> Extra / συστατικά</a>
+                    <a href="/admin/printers" class="admin-nav-link @(IsActive("/admin/printers") ? "active" : "")"><span aria-hidden="true">▣</span> Εκτυπωτές</a>
+                    <a href="/admin/appearance" class="admin-nav-link @(IsActive("/admin/appearance") ? "active" : "")"><span aria-hidden="true">◐</span> Εμφάνιση</a>
+
+                    <span class="admin-nav-caption">Λειτουργία & αναφορές</span>
+                    <a href="/admin/cashier" class="admin-nav-link @(IsActive("/admin/cashier") ? "active" : "")"><span aria-hidden="true">€</span> Ταμείο</a>
+                    <a href="/admin/reports" class="admin-nav-link @(IsActive("/admin/reports") ? "active" : "")"><span aria-hidden="true">▥</span> Αναφορές πωλήσεων</a>
+                    <a href="/admin/backoffice" class="admin-nav-link @(IsActive("/admin/backoffice") ? "active" : "")"><span aria-hidden="true">▧</span> Backoffice & αποθήκη</a>
+                    <a href="/admin/bank-pos" class="admin-nav-link @(IsActive("/admin/bank-pos") ? "active" : "")"><span aria-hidden="true">▤</span> Τραπεζικά POS</a>
+                    <a href="/admin/fiscal-settings" class="admin-nav-link @(IsActive("/admin/fiscal-settings") ? "active" : "")"><span aria-hidden="true">▤</span> Παραστατικά</a>
+                    <a href="/admin/issued-documents" data-testid="nav-issued-documents" class="admin-nav-link @(IsActive("/admin/issued-documents") ? "active" : "")"><span aria-hidden="true">▤</span> Εκδοθείσες αποδείξεις</a>
+                    <a href="/admin/parochos-history" class="admin-nav-link @(IsActive("/admin/parochos-history") ? "active" : "")"><span aria-hidden="true">↻</span> Ιστορικό παρόχου</a>
+                    <a href="/admin/reprint" class="admin-nav-link @(IsActive("/admin/reprint") ? "active" : "")"><span aria-hidden="true">⎙</span> Επανεκτύπωση</a>
+
+                    <span class="admin-nav-caption">Χρήστες & σύστημα</span>
+                    <a href="/admin/users" class="admin-nav-link @(IsActive("/admin/users") ? "active" : "")"><span aria-hidden="true">♙</span> Χρήστες</a>
+                    <a href="/admin/database-search" class="admin-nav-link @(IsActive("/admin/database-search") ? "active" : "")"><span aria-hidden="true">⌕</span> Αναζήτηση βάσης</a>
+                    @if (!Configuration.GetValue<bool>("CloudWeb:Enabled"))
+                    {
+                        <a href="/admin/backups" class="admin-nav-link @(IsActive("/admin/backups") ? "active" : "")"><span aria-hidden="true">◫</span> Backup / επαναφορά</a>
+                        <a href="/admin/database-location" class="admin-nav-link @(IsActive("/admin/database-location") ? "active" : "")"><span aria-hidden="true">⌖</span> Θέση βάσης</a>
+                        <a href="/admin/cloud-sync" class="admin-nav-link @(IsActive("/admin/cloud-sync") ? "active" : "")"><span aria-hidden="true">↔</span> Σύνδεση cloud</a>
+                        <a href="/license" class="admin-nav-link @(IsActive("/license") ? "active" : "")"><span aria-hidden="true">◇</span> Άδεια χρήσης</a>
+                    }
+                </nav>
+                <a class="admin-sidebar-pos-link" href="/waiter"><span aria-hidden="true">🍽️</span> Μετάβαση στις παραγγελίες</a>
+            </aside>
+        }
     </AuthorizeView>
 </div>
 
 @code {
     private string displayName = "Παραγγελιοληψία";
+    private string CurrentPath => "/" + Navigation.ToBaseRelativePath(Navigation.Uri).Split('?', '#')[0].Trim('/');
+    private bool IsAdminArea => CurrentPath.Equals("/admin", StringComparison.OrdinalIgnoreCase)
+        || CurrentPath.StartsWith("/admin/", StringComparison.OrdinalIgnoreCase)
+        || CurrentPath.Equals("/license", StringComparison.OrdinalIgnoreCase);
+
+    protected override void OnInitialized() => Navigation.LocationChanged += HandleLocationChanged;
+
     protected override async Task OnInitializedAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         var appearance = await db.RestaurantAppearances.AsNoTracking().FirstOrDefaultAsync(x => x.Id == 1);
         if (!string.IsNullOrWhiteSpace(appearance?.DisplayName)) displayName = appearance.DisplayName;
     }
+
+    private bool IsActive(string path) => CurrentPath.Equals(path, StringComparison.OrdinalIgnoreCase)
+        || (path != "/admin" && CurrentPath.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase));
+
+    private void HandleLocationChanged(object? sender, LocationChangedEventArgs args) => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Navigation.LocationChanged -= HandleLocationChanged;
 }
