@@ -1633,6 +1633,198 @@
         .product-search { min-height:31px; margin-top:4px; }
         .product-page-controls { min-height:31px; padding:1px 5px 3px; }
     }
+
+    /* Mobile order entry and review are separate views. Product entry stays
+       visible while tapping items; the fixed order button opens the full cart. */
+    .mobile-order-trigger,
+    .mobile-order-backdrop,
+    .mobile-order-close,
+    .mobile-action-label { display:none; }
+
+    @@media (max-width:680px) {
+        .table-order-page {
+            display:flex !important;
+            flex-direction:column;
+            height:100% !important;
+            min-height:0 !important;
+            padding:6px 6px calc(70px + env(safe-area-inset-bottom)) !important;
+            overflow:hidden !important;
+        }
+        .table-order-page > .nav-button { flex:0 0 auto; min-height:34px; margin:0 0 3px; padding:5px 9px; }
+        .table-order-page .takeaway-mode-banner { flex:0 0 auto; margin:2px 0 5px; padding:7px 9px; }
+        .table-order-page .table-order-heading { flex:0 0 auto; min-height:30px; margin:0 2px 5px; }
+        .table-order-page .table-order-heading h2 { margin:0; font-size:clamp(1rem,4vw,1.28rem); }
+        .table-order-page .appearance-admin-tools { display:none !important; }
+        .table-order-page .order-layout {
+            display:grid !important;
+            flex:1 1 0 !important;
+            grid-template-columns:clamp(76px,21vw,100px) minmax(0,1fr) !important;
+            grid-template-rows:minmax(0,1fr) !important;
+            gap:5px;
+            width:100%;
+            height:auto !important;
+            min-height:0 !important;
+            overflow:hidden !important;
+        }
+        .table-order-page .category-panel {
+            grid-column:1 !important;
+            grid-row:1 !important;
+            min-width:0;
+            min-height:0 !important;
+            max-height:none !important;
+            padding:4px !important;
+            overflow:hidden !important;
+        }
+        .table-order-page .category-panel-title { display:none; }
+        .table-order-page .category-list {
+            display:flex;
+            flex-direction:column;
+            flex-wrap:nowrap;
+            align-items:stretch;
+            height:100%;
+            gap:4px;
+            padding:0;
+            overflow-x:hidden;
+            overflow-y:auto;
+            overscroll-behavior:contain;
+        }
+        .table-order-page .category-choice {
+            flex:0 0 auto;
+            width:100%;
+            min-width:0;
+            max-width:none;
+            min-height:46px;
+            padding:6px 3px;
+            overflow-wrap:anywhere;
+            text-align:center;
+            font-size:clamp(.66rem,2.6vw,.82rem);
+            line-height:1.1;
+        }
+        .table-order-page .products-panel {
+            grid-column:2 !important;
+            grid-row:1 !important;
+            width:auto !important;
+            min-height:0 !important;
+            max-height:none !important;
+            overflow:hidden !important;
+        }
+        .table-order-page .products-panel-header { padding:6px 7px; }
+        .table-order-page .products-panel-toolbar > small:last-child { display:none !important; }
+        .table-order-page .product-search { min-height:36px; font-size:.84rem; }
+        .table-order-page .product-page-controls { min-height:34px; font-size:.69rem; }
+        .table-order-page .product-page-buttons button { min-width:38px; min-height:36px; }
+        .table-order-page .menu-item-btn .price { font-size:.82em; }
+
+        .table-order-page .order-panel:not(.mobile-open) { display:none !important; }
+        .table-order-page .mobile-order-trigger {
+            position:fixed;
+            z-index:8000;
+            left:7px;
+            right:7px;
+            bottom:max(7px,env(safe-area-inset-bottom));
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:10px;
+            min-height:54px;
+            padding:8px 14px;
+            border:1px solid #0a756d;
+            border-radius:13px;
+            background:linear-gradient(135deg,#087f76,#14536d);
+            color:#fff;
+            box-shadow:0 8px 20px rgba(7,75,79,.28);
+            font:inherit;
+            text-align:left;
+            cursor:pointer;
+            -webkit-tap-highlight-color:transparent;
+        }
+        .mobile-order-trigger-copy { min-width:0; display:grid; gap:2px; }
+        .mobile-order-trigger-copy strong { font-size:.9rem; line-height:1.1; }
+        .mobile-order-trigger-copy small { color:#d9f5ee; font-size:.73rem; font-weight:700; }
+        .mobile-order-trigger-action { flex:0 0 auto; font-size:.78rem; font-weight:850; }
+
+        .table-order-page .mobile-order-backdrop {
+            position:fixed;
+            z-index:8001;
+            inset:0;
+            display:block;
+            border:0;
+            background:rgba(8,22,40,.58);
+            -webkit-tap-highlight-color:transparent;
+        }
+        .table-order-page .order-panel.mobile-open {
+            position:fixed !important;
+            z-index:8002 !important;
+            top:max(6px,env(safe-area-inset-top));
+            right:auto !important;
+            bottom:max(6px,env(safe-area-inset-bottom));
+            left:50%;
+            display:flex !important;
+            flex-direction:column;
+            width:min(560px,calc(100vw - 12px)) !important;
+            height:auto !important;
+            min-height:0 !important;
+            max-height:none !important;
+            margin:0 !important;
+            padding:10px !important;
+            overflow-x:hidden !important;
+            overflow-y:auto !important;
+            overscroll-behavior:contain;
+            border-radius:18px;
+            transform:translateX(-50%);
+        }
+        .table-order-page .order-panel.mobile-open > div:first-child { flex:0 0 auto; min-height:40px; margin-bottom:6px; }
+        .table-order-page .order-panel.mobile-open > div:first-child h3 { font-size:1.08rem; }
+        .table-order-page .mobile-order-close {
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            min-height:38px;
+            padding:6px 10px;
+            border:1px solid #d3deea;
+            border-radius:10px;
+            background:#f7fafc;
+            color:#1f3554;
+            font:inherit;
+            font-size:.8rem;
+            font-weight:800;
+            cursor:pointer;
+        }
+        .table-order-page .order-panel.mobile-open > .selection-toolbar { flex:0 0 auto; gap:5px !important; margin:3px 0 7px !important; }
+        .table-order-page .order-panel.mobile-open > .order-list {
+            flex:0 1 auto;
+            min-height:48px;
+            max-height:27dvh;
+            margin:0 0 5px;
+            overflow-x:hidden;
+            overflow-y:auto;
+            overscroll-behavior:contain;
+        }
+        .table-order-page .order-panel.mobile-open .order-list li { padding:6px 2px; font-size:.84rem; }
+        .table-order-page .order-panel.mobile-open .order-list .remove-btn,
+        .table-order-page .order-panel.mobile-open .order-list .quantity-step { width:34px; height:34px; }
+        .table-order-page .order-panel.mobile-open > .total { flex:0 0 auto; margin:3px 0 6px; padding:9px 11px; font-size:1.05rem; }
+        .table-order-page .order-panel.mobile-open > .send-btn { position:sticky; z-index:2; bottom:0; flex:0 0 auto; min-height:48px; margin:0 0 6px !important; }
+        .table-order-page .order-panel.mobile-open .order-action-grid { grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; margin-top:4px; }
+        .table-order-page .order-panel.mobile-open .order-action-grid .order-action-btn,
+        .table-order-page .order-panel.mobile-open .staff-consumption-btn {
+            grid-column:auto !important;
+            min-width:0;
+            min-height:48px;
+            padding:5px 3px;
+            border-radius:9px;
+            font-size:clamp(.68rem,2.8vw,.8rem);
+            line-height:1.12;
+            overflow-wrap:anywhere;
+        }
+        .table-order-page .order-panel.mobile-open .action-icon { margin-right:2px; }
+        .table-order-page .order-panel.mobile-open .order-comment-box { gap:4px; margin:7px 0 2px; font-size:.78rem; }
+        .table-order-page .order-panel.mobile-open .order-comment-box textarea { min-height:44px; padding:6px 8px; }
+        .table-order-page .order-panel.mobile-open .order-comment-box small,
+        .table-order-page .order-panel.mobile-open > .action-button-color-hint { display:none; }
+        .table-order-page .order-panel.mobile-open .desktop-action-label { display:none; }
+        .table-order-page .order-panel.mobile-open .mobile-action-label { display:inline; }
+    }
 </style>
 
 <div class="table-order-page @(venueImage is null ? "" : "has-venue-image")" style="--order-page-bg:@pageBackground;--venue-image:url('@venueImage')" @onclick="CloseCustomizationMenus" @oncontextmenu="OpenOrderBackgroundMenu" @oncontextmenu:preventDefault="true">
@@ -1760,6 +1952,18 @@
         </AuthorizeView>
     </div>
 
+    @if (mobileOrderOpen)
+    {
+        <button type="button" class="mobile-order-backdrop" aria-label="Κλείσιμο ελέγχου παραγγελίας" @onclick="CloseMobileOrderPanel"></button>
+    }
+    <button type="button" class="mobile-order-trigger" aria-expanded="@mobileOrderOpen" @onclick="ToggleMobileOrderPanel">
+        <span class="mobile-order-trigger-copy">
+            <strong>Παραγγελία · @ActiveOrderLineCount είδη</strong>
+            <small>Σύνολο €@CurrentOrderTotal.ToString("0.00")</small>
+        </span>
+        <span class="mobile-order-trigger-action">@(mobileOrderOpen ? "Κλείσιμο ×" : "Έλεγχος ›")</span>
+    </button>
+
     <div class="order-layout">
         <div class="category-panel">
             <div class="category-panel-title">Κατηγορίες</div>
@@ -1872,9 +2076,10 @@
             }
         </div>
 
-        <div class="order-panel @(selectionMode ? "selection-active" : "")">
+        <div class="order-panel @(selectionMode ? "selection-active" : "") @(mobileOrderOpen ? "mobile-open" : "")">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
                 <h3 style="margin:0">Παραγγελία</h3>
+                <button type="button" class="mobile-order-close" @onclick="CloseMobileOrderPanel">← Είδη</button>
             </div>
             @if (selectionMode)
             {
@@ -2030,7 +2235,7 @@
                         title="Για αλλαγή χρώματος, ενεργοποίησε πρώτα τη διαχείριση εμφάνισης"
                         @oncontextmenu='(e) => OpenActionButtonCustomization("close", e)'
                         @oncontextmenu:preventDefault="true" @oncontextmenu:stopPropagation="true"
-                        @onclick="() => { showPaymentModal = true; closeStep = 1; }"><span class="action-icon" aria-hidden="true">✅</span>Κλείσιμο τραπεζιού</button>
+                        @onclick="() => { showPaymentModal = true; closeStep = 1; }"><span class="action-icon" aria-hidden="true">✅</span><span class="desktop-action-label">Κλείσιμο τραπεζιού</span><span class="mobile-action-label">Εξόφληση / κλείσιμο</span></button>
             </div>
             <button type="button" class="close-btn order-action-btn staff-consumption-btn" disabled="@staffConsumptionBusy" @onclick="BeginStaffConsumptionAsync">Ιδιοκατανάλωση</button>
             <AuthorizeView Roles="Admin">
@@ -2866,6 +3071,12 @@
 }
 
 @code {
+    private bool mobileOrderOpen;
+    private int ActiveOrderLineCount => order.Items.Count(item => !item.IsCancelled && RemainingQuantityForItem(item) > 0);
+
+    private void ToggleMobileOrderPanel() => mobileOrderOpen = !mobileOrderOpen;
+    private void CloseMobileOrderPanel() => mobileOrderOpen = false;
+
     private bool showTableTransferModal;
     private bool selectionMode;
     private readonly HashSet<int> selectedOrderItemIds = new();
