@@ -1,0 +1,71 @@
+@page "/admin"
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@inject IConfiguration Configuration
+
+<PageTitle>Επεξεργασία προγράμματος</PageTitle>
+
+<div class="admin-dashboard">
+    <section class="admin-dashboard-hero">
+        <div>
+            <span class="admin-dashboard-kicker">ΧΩΡΟΣ ΔΙΑΧΕΙΡΙΣΗΣ</span>
+            <h1>Επεξεργασία προγράμματος</h1>
+            <p>Οι ρυθμίσεις του καταστήματος συγκεντρωμένες σε ένα καθαρό, εύχρηστο σημείο.</p>
+        </div>
+        <a class="admin-dashboard-order-link" href="/waiter"><span aria-hidden="true">🍽️</span> Λήψη παραγγελίας</a>
+    </section>
+
+    <section class="admin-dashboard-group" aria-labelledby="dashboard-store-title">
+        <div class="admin-dashboard-group-heading">
+            <div><span>01</span><h2 id="dashboard-store-title">Οργάνωση καταστήματος</h2></div>
+            <p>Κατάλογος, τραπέζια και εξοπλισμός</p>
+        </div>
+        <div class="admin-dashboard-grid">
+            @if (!Configuration.GetValue<bool>("Edition:TakeAwayOnly"))
+            {
+                <a class="admin-dashboard-card" href="/admin/tables"><span class="admin-card-icon">▤</span><strong>Τραπέζια & περιοχές</strong><small>Οργάνωση χώρων και τραπεζιών</small><span class="admin-card-arrow">↗</span></a>
+                <a class="admin-dashboard-card" href="/admin/floorplan"><span class="admin-card-icon">⌖</span><strong>Κάτοψη</strong><small>Διάταξη τραπεζιών στον χώρο</small><span class="admin-card-arrow">↗</span></a>
+            }
+            <a class="admin-dashboard-card" href="/admin/menu"><span class="admin-card-icon">☷</span><strong>Κατάλογος</strong><small>Προϊόντα και τιμές</small><span class="admin-card-arrow">↗</span></a>
+            <a class="admin-dashboard-card" href="/admin/categories"><span class="admin-card-icon">▦</span><strong>Κατηγορίες</strong><small>Ομαδοποίηση προϊόντων</small><span class="admin-card-arrow">↗</span></a>
+            <a class="admin-dashboard-card" href="/admin/extras"><span class="admin-card-icon">＋</span><strong>Extra / συστατικά</strong><small>Επιλογές και πρόσθετα</small><span class="admin-card-arrow">↗</span></a>
+            <a class="admin-dashboard-card" href="/admin/printers"><span class="admin-card-icon">▣</span><strong>Εκτυπωτές</strong><small>Σύνδεση και δρομολόγηση</small><span class="admin-card-arrow">↗</span></a>
+            <a class="admin-dashboard-card" href="/admin/appearance"><span class="admin-card-icon">◐</span><strong>Εμφάνιση</strong><small>Όνομα, φόντο και διάταξη</small><span class="admin-card-arrow">↗</span></a>
+        </div>
+    </section>
+
+    <section class="admin-dashboard-group" aria-labelledby="dashboard-operations-title">
+        <div class="admin-dashboard-group-heading">
+            <div><span>02</span><h2 id="dashboard-operations-title">Λειτουργία & έλεγχος</h2></div>
+            <p>Πωλήσεις, αποθήκη και παραστατικά</p>
+        </div>
+        <div class="admin-dashboard-grid">
+            <a class="admin-dashboard-card" href="/admin/cashier"><span class="admin-card-icon">€</span><strong>Ταμείο</strong><small>Εξόφληση και κλείσιμο τραπεζιών</small><span class="admin-card-arrow">↗</span></a>
+            <a class="admin-dashboard-card" href="/admin/reports"><span class="admin-card-icon">▥</span><strong>Αναφορές</strong><small>Πωλήσεις και ακυρώσεις</small><span class="admin-card-arrow">↗</span></a>
+            <a class="admin-dashboard-card" href="/admin/backoffice"><span class="admin-card-icon">▧</span><strong>Backoffice & αποθήκη</strong><small>Απόθεμα, αγορές και κόστος</small><span class="admin-card-arrow">↗</span></a>
+            <a class="admin-dashboard-card" href="/admin/bank-pos"><span class="admin-card-icon">▤</span><strong>Τραπεζικά POS</strong><small>Ρυθμίσεις τερματικών</small><span class="admin-card-arrow">↗</span></a>
+            <a class="admin-dashboard-card" href="/admin/fiscal-settings"><span class="admin-card-icon">▤</span><strong>Παραστατικά</strong><small>Πάροχος και φορολογικές ρυθμίσεις</small><span class="admin-card-arrow">↗</span></a>
+            <a class="admin-dashboard-card" href="/admin/issued-documents"><span class="admin-card-icon">▤</span><strong>Εκδοθείσες αποδείξεις</strong><small>Αναζήτηση εκδοθέντων εγγράφων</small><span class="admin-card-arrow">↗</span></a>
+            <a class="admin-dashboard-card" href="/admin/parochos-history"><span class="admin-card-icon">↻</span><strong>Ιστορικό παρόχου</strong><small>Κατάσταση και διαβιβάσεις</small><span class="admin-card-arrow">↗</span></a>
+            <a class="admin-dashboard-card" href="/admin/reprint"><span class="admin-card-icon">⎙</span><strong>Επανεκτύπωση</strong><small>Εκτύπωση πρόσφατων παραγγελιών</small><span class="admin-card-arrow">↗</span></a>
+        </div>
+    </section>
+
+    <section class="admin-dashboard-group" aria-labelledby="dashboard-system-title">
+        <div class="admin-dashboard-group-heading">
+            <div><span>03</span><h2 id="dashboard-system-title">Χρήστες & σύστημα</h2></div>
+            <p>Πρόσβαση, δεδομένα και αντίγραφα</p>
+        </div>
+        <div class="admin-dashboard-grid">
+            <a class="admin-dashboard-card" href="/admin/users"><span class="admin-card-icon">♙</span><strong>Χρήστες</strong><small>Προσθήκη και δικαιώματα προσωπικού</small><span class="admin-card-arrow">↗</span></a>
+            <a class="admin-dashboard-card" href="/admin/database-search"><span class="admin-card-icon">⌕</span><strong>Αναζήτηση βάσης</strong><small>Εύρεση καταχωρίσεων</small><span class="admin-card-arrow">↗</span></a>
+            @if (!Configuration.GetValue<bool>("CloudWeb:Enabled"))
+            {
+                <a class="admin-dashboard-card" href="/admin/backups"><span class="admin-card-icon">◫</span><strong>Backup / επαναφορά</strong><small>Ασφαλή αντίγραφα δεδομένων</small><span class="admin-card-arrow">↗</span></a>
+                <a class="admin-dashboard-card" href="/admin/database-location"><span class="admin-card-icon">⌖</span><strong>Θέση βάσης</strong><small>Φάκελος και όνομα βάσης</small><span class="admin-card-arrow">↗</span></a>
+                <a class="admin-dashboard-card" href="/admin/cloud-sync"><span class="admin-card-icon">↔</span><strong>Σύνδεση Cloud</strong><small>Συγχρονισμός καταστήματος</small><span class="admin-card-arrow">↗</span></a>
+                <a class="admin-dashboard-card" href="/license"><span class="admin-card-icon">◇</span><strong>Άδεια χρήσης</strong><small>Κατάσταση εγκατάστασης</small><span class="admin-card-arrow">↗</span></a>
+            }
+        </div>
+    </section>
+</div>

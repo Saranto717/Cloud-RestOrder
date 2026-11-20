@@ -30,16 +30,10 @@ else
                 <small>Επιλογή χρήστη και τραπεζιού</small>
             </button>
 
-            <button type="button" class="welcome-btn edit" @onclick='() => Nav.NavigateTo("/login", forceLoad: true)'>
+            <button type="button" class="welcome-btn edit" @onclick='() => Nav.NavigateTo("/login?returnUrl=/admin", forceLoad: true)'>
                 <span class="icon" aria-hidden="true">⚙</span>
-                <span>Διαχείριση</span>
-                <small>Κατάλογος, τραπέζια και ρυθμίσεις</small>
-            </button>
-
-            <button type="button" class="welcome-btn adduser" @onclick='() => Nav.NavigateTo("/login?returnUrl=/admin/quick-add-user", forceLoad: true)'>
-                <span class="icon" aria-hidden="true">👥</span>
-                <span>Χρήστες</span>
-                <small>Προσθήκη και επεξεργασία προσωπικού</small>
+                <span>Επεξεργασία προγράμματος</span>
+                <small>Κατάλογος, τραπέζια, εκτυπωτές και ρυθμίσεις</small>
             </button>
         </div>
     </div>
@@ -71,7 +65,7 @@ else
             {
                 isAuthenticated = true;
                 if (user.IsInRole("Admin"))
-                    Nav.NavigateTo("/admin/tables", forceLoad: true);
+                    Nav.NavigateTo("/admin", forceLoad: true);
                 else
                     Nav.NavigateTo("/waiter", forceLoad: true);
             }

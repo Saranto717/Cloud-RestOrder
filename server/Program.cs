@@ -364,7 +364,7 @@ if (cloudWebMode)
             db.Users.Add(user);
             await db.SaveChangesAsync(http.RequestAborted);
             await SignInUser(http, user);
-            return Results.Redirect("/admin/tables");
+            return Results.Redirect("/admin");
         }
         finally { tenantLock.Release(); }
     });
@@ -398,12 +398,13 @@ app.MapPost("/api/login", async (HttpContext http, IDbContextFactory<AppDbContex
     await SignInUser(http, user!);
 
     // Ασφαλές μόνο αν οδηγεί σε εσωτερική σελίδα διαχειριστή
-    if (!string.IsNullOrWhiteSpace(returnUrl) && returnUrl.StartsWith("/admin/"))
+    if (!string.IsNullOrWhiteSpace(returnUrl)
+        && (returnUrl.Equals("/admin", StringComparison.Ordinal) || returnUrl.StartsWith("/admin/", StringComparison.Ordinal)))
     {
         return Results.Redirect(returnUrl);
     }
 
-    return Results.Redirect("/admin/tables");
+    return Results.Redirect("/admin");
 });
 
 // Σύνδεση για "Πάρτε παραγγελία": εμφανίζονται όλοι οι ενεργοί χρήστες, ο καθένας με τον δικό του κωδικό (αν έχει)

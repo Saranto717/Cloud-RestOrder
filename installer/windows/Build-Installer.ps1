@@ -1,11 +1,14 @@
 param(
-    [string]$Version = '17.3.137'
+    [string]$Version = '17.3.138',
+    [string]$ArtifactsRoot = ''
 )
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $project = Join-Path $repo 'server\RestaurantOrders.csproj'
-$publish = Join-Path $repo "artifacts\publish\win-x64-$Version"
-$output = Join-Path $repo 'artifacts\installer'
+if ([string]::IsNullOrWhiteSpace($ArtifactsRoot)) { $ArtifactsRoot = Join-Path $repo 'artifacts' }
+else { $ArtifactsRoot = [IO.Path]::GetFullPath($ArtifactsRoot) }
+$publish = Join-Path $ArtifactsRoot "publish\win-x64-$Version"
+$output = Join-Path $ArtifactsRoot 'installer'
 if (Test-Path $publish) { throw "Publish folder already exists; use a new version or move it aside: $publish" }
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 dotnet publish $project -c Release -r win-x64 --self-contained true -o $publish `

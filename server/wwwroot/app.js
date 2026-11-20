@@ -1,6 +1,70 @@
 // Σύντομο "ding" όταν στέλνεται επιτυχώς μια παραγγελία στην κουζίνα/μπαρ.
 // Χρησιμοποιεί το Web Audio API, δεν χρειάζεται αρχείο ήχου.
 window.restaurantOrders = window.restaurantOrders || {};
+window.restaurantOrders.observeProductGrid = function (panel, dotNetRef) {
+    if (!panel || !dotNetRef) return;
+    if (panel._productGridCleanup) panel._productGridCleanup();
+
+    let frame = 0;
+    let lastCapacity = 0;
+    let lastColumns = 0;
+    let lastRows = 0;
+
+    const measure = function () {
+        frame = 0;
+        const grid = panel.querySelector('.item-grid');
+        if (!grid) return;
+
+        const width = grid.clientWidth;
+        const height = grid.clientHeight;
+        if (width < 20 || height < 20) return;
+
+        const style = window.getComputedStyle(grid);
+        const columnGap = Number.parseFloat(style.columnGap) || 5;
+        const rowGap = Number.parseFloat(style.rowGap) || 5;
+        const compact = window.innerWidth <= 820;
+        const minimumTileWidth = compact ? (window.innerWidth <= 390 ? 86 : 94) : 112;
+        const minimumTileHeight = compact ? 44 : 50;
+        const columns = Math.max(1, Math.floor((width + columnGap) / (minimumTileWidth + columnGap)));
+        const rows = Math.max(1, Math.floor((height + rowGap) / (minimumTileHeight + rowGap)));
+        const capacity = columns * rows;
+
+        grid.style.setProperty('--product-grid-columns', columns);
+        grid.style.setProperty('--product-grid-rows', rows);
+        if (capacity === lastCapacity && columns === lastColumns && rows === lastRows) return;
+
+        lastCapacity = capacity;
+        lastColumns = columns;
+        lastRows = rows;
+        dotNetRef.invokeMethodAsync('SetProductGridCapacity', capacity, columns, rows)
+            .catch(error => {
+                if (!panel.isConnected) return;
+                console.error('Could not update product grid capacity', error);
+            });
+    };
+
+    const schedule = function () {
+        if (frame) return;
+        frame = window.requestAnimationFrame(measure);
+    };
+
+    const resizeObserver = new ResizeObserver(schedule);
+    resizeObserver.observe(panel);
+    const mutationObserver = new MutationObserver(schedule);
+    mutationObserver.observe(panel, { childList: true, subtree: true });
+    window.addEventListener('resize', schedule, { passive: true });
+    panel._productGridCleanup = function () {
+        resizeObserver.disconnect();
+        mutationObserver.disconnect();
+        window.removeEventListener('resize', schedule);
+        if (frame) window.cancelAnimationFrame(frame);
+        panel._productGridCleanup = null;
+    };
+    schedule();
+};
+window.restaurantOrders.stopProductGridObserver = function (panel) {
+    if (panel && panel._productGridCleanup) panel._productGridCleanup();
+};
 window.restaurantOrders.downloadBase64 = function (fileName, contentType, base64) {
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
@@ -214,6 +278,29 @@ document.addEventListener('click', function (event) {
     const target = event.target;
     if (!(target instanceof Element)) return;
 
+    const adminToggle = target.closest('[data-admin-sidebar-toggle="true"]');
+    if (adminToggle) {
+        const root = adminToggle.closest('.topbar');
+        const sidebar = root?.querySelector('.admin-sidebar');
+        const backdrop = root?.querySelector('[data-admin-sidebar-backdrop="true"]');
+        if (!sidebar) return;
+        const isOpen = sidebar.classList.toggle('is-open');
+        backdrop?.classList.toggle('is-open', isOpen);
+        adminToggle.setAttribute('aria-expanded', String(isOpen));
+        document.body.classList.toggle('admin-menu-open', isOpen);
+        return;
+    }
+
+    if (target.closest('[data-admin-sidebar-backdrop="true"]')) {
+        document.querySelectorAll('.topbar').forEach(root => {
+            root.querySelector('.admin-sidebar')?.classList.remove('is-open');
+            root.querySelector('[data-admin-sidebar-backdrop="true"]')?.classList.remove('is-open');
+            root.querySelector('[data-admin-sidebar-toggle="true"]')?.setAttribute('aria-expanded', 'false');
+        });
+        document.body.classList.remove('admin-menu-open');
+        return;
+    }
+
     const toggle = target.closest('[data-nav-toggle="true"]');
     if (toggle) {
         const nav = toggle.closest('nav');
@@ -230,6 +317,25 @@ document.addEventListener('click', function (event) {
             nav.querySelector('[data-nav-toggle="true"]')?.setAttribute('aria-expanded', 'false');
         });
     }
+
+    if (target.closest('.admin-sidebar a')) {
+        document.querySelectorAll('.topbar').forEach(root => {
+            root.querySelector('.admin-sidebar')?.classList.remove('is-open');
+            root.querySelector('[data-admin-sidebar-backdrop="true"]')?.classList.remove('is-open');
+            root.querySelector('[data-admin-sidebar-toggle="true"]')?.setAttribute('aria-expanded', 'false');
+        });
+        document.body.classList.remove('admin-menu-open');
+    }
+});
+
+document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape') return;
+    document.querySelectorAll('.topbar').forEach(root => {
+        root.querySelector('.admin-sidebar')?.classList.remove('is-open');
+        root.querySelector('[data-admin-sidebar-backdrop="true"]')?.classList.remove('is-open');
+        root.querySelector('[data-admin-sidebar-toggle="true"]')?.setAttribute('aria-expanded', 'false');
+    });
+    document.body.classList.remove('admin-menu-open');
 });
 
 
