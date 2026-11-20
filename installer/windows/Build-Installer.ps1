@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '17.3.138',
+    [string]$Version = '17.3.139',
     [string]$ArtifactsRoot = ''
 )
 $ErrorActionPreference = 'Stop'
