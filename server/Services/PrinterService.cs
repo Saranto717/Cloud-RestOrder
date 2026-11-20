@@ -1,8 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using System.Globalization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.JSInterop;
@@ -22,10 +20,7 @@ public class PrinterService
 {
     private readonly ILogger<PrinterService> _logger;
     private readonly IJSRuntime _js;
-    private readonly IHttpClientFactory? _httpClientFactory;
     private readonly bool _cloudWebMode;
-    private readonly string _cloudPrintBridgeUrl;
-    private readonly string _cloudPrintBridgeToken;
     public string? LastTestError { get; private set; }
     /// <summary>
     /// Τελευταίο σφάλμα αποστολής προς εκτυπωτή στο τρέχον Blazor scope.
@@ -63,30 +58,10 @@ public class PrinterService
     }
 
     public PrinterService(ILogger<PrinterService> logger, IJSRuntime js, IConfiguration configuration)
-        : this(logger, js, configuration, null)
-    {
-    }
-
-    public PrinterService(ILogger<PrinterService> logger, IJSRuntime js, IConfiguration configuration,
-        IHttpClientFactory? httpClientFactory)
     {
         _logger = logger;
         _js = js;
-        _httpClientFactory = httpClientFactory;
         _cloudWebMode = configuration.GetValue<bool>("CloudWeb:Enabled");
-        _cloudPrintBridgeUrl = configuration["CloudWeb:PrintBridgeUrl"]?.Trim() ?? "";
-        var tokenFile = configuration["CloudWeb:SyncTokenFile"];
-        try
-        {
-            _cloudPrintBridgeToken = !string.IsNullOrWhiteSpace(tokenFile) && File.Exists(tokenFile)
-                ? File.ReadAllText(tokenFile).Trim()
-                : configuration["CloudWeb:SyncToken"]?.Trim() ?? "";
-        }
-        catch (Exception ex)
-        {
-            _cloudPrintBridgeToken = "";
-            _logger.LogError(ex, "Δεν ήταν δυνατή η ανάγνωση του μυστικού token για το Cloud Print Bridge.");
-        }
     }
 
     /// <summary>Επιστρέφει (byte κωδικού για ESC t n, .NET Encoding) ανάλογα με την επιλογή codepage του εκτυπωτή.</summary>
@@ -394,67 +369,6 @@ public class PrinterService
             return false;
         }
     }
-
-    private async Task<bool> SendViaCloudPrintBridgeAsync(
-        PrinterStation station, IPAddress printerAddress, byte[] bytes, PrintJobKind jobKind)
-    {
-        if (_httpClientFactory is null || string.IsNullOrWhiteSpace(_cloudPrintBridgeUrl))
-        {
-            LastPrintError = "Δεν έχει ρυθμιστεί το Cloud Print Bridge στον server.";
-            if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(_cloudPrintBridgeToken))
-        {
-            LastPrintError = "Δεν είναι διαθέσιμο το κλειδί ασφαλείας του Cloud Print Bridge.";
-            if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
-            return false;
-        }
-
-        try
-        {
-            var baseUrl = _cloudPrintBridgeUrl.EndsWith('/') ? _cloudPrintBridgeUrl : _cloudPrintBridgeUrl + "/";
-            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(baseUrl), "v1/print"));
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _cloudPrintBridgeToken);
-            request.Content = JsonContent.Create(new CloudPrintBridgeRequest(
-                printerAddress.ToString(), station.Port, Convert.ToBase64String(bytes), Math.Clamp(station.Copies, 1, 5)));
-
-            var client = _httpClientFactory.CreateClient("CloudPrintBridge");
-            using var response = await client.SendAsync(request);
-            var result = await response.Content.ReadFromJsonAsync<CloudPrintBridgeResponse>();
-            if (!response.IsSuccessStatusCode || result?.Success != true)
-            {
-                LastPrintError = result?.Error ?? $"Το Cloud Print Bridge επέστρεψε HTTP {(int)response.StatusCode}.";
-                _logger.LogWarning("Αποτυχία relay εκτύπωσης {Kind} προς {Name} ({Ip}:{Port}): {Error}",
-                    jobKind, station.Name, printerAddress, station.Port, LastPrintError);
-                if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
-                return false;
-            }
-
-            _logger.LogInformation("Η εκτύπωση {Kind} στάλθηκε μέσω Cloud Print Bridge στον {Name} ({Ip}:{Port})",
-                jobKind, station.Name, printerAddress, station.Port);
-            return true;
-        }
-        catch (OperationCanceledException)
-        {
-            LastPrintError = "Έληξε ο χρόνος απόκρισης του Cloud Print Bridge.";
-            _logger.LogWarning("Timeout relay εκτύπωσης προς {Name} ({Ip}:{Port})", station.Name, printerAddress, station.Port);
-            if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
-            return false;
-        }
-        catch (Exception ex)
-        {
-            LastPrintError = $"Αποτυχία επικοινωνίας με το Cloud Print Bridge: {ex.Message}";
-            _logger.LogError(ex, "Αποτυχία relay εκτύπωσης {Kind} προς {Name} ({Ip}:{Port})",
-                jobKind, station.Name, printerAddress, station.Port);
-            if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
-            return false;
-        }
-    }
-
-    private sealed record CloudPrintBridgeRequest(string IpAddress, int Port, string DataBase64, int Copies);
-    private sealed record CloudPrintBridgeResponse(bool Success, string? Error);
 
     private static bool IsPrivateLanAddress(IPAddress address)
     {
