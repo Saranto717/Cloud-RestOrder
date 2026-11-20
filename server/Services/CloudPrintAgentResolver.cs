@@ -5,7 +5,7 @@ using RestaurantOrders.Data;
 
 namespace RestaurantOrders.Services;
 
-/// <summary>Chooses between an already-paired local Windows printer and cloud-side TCP/Android printing.</summary>
+/// <summary>Routes cloud orders to a local print node instead of opening printer connections from the cloud host.</summary>
 public sealed class CloudPrintAgentResolver(IServiceProvider services, ILogger<CloudPrintAgentResolver> logger)
 {
     public async Task<bool> ShouldQueueToWindowsAsync(
@@ -15,35 +15,28 @@ public sealed class CloudPrintAgentResolver(IServiceProvider services, ILogger<C
     {
         if (!db.IsCloudHosted) return false;
 
-        try
+        if (!requiresWindowsUsbPrinter)
         {
-            var js = services.GetService<IJSRuntime>();
-            if (!requiresWindowsUsbPrinter
-                    && js is not null
-                    && await js.InvokeAsync<bool>("restaurantOrdersAndroidPrinter.isAvailable", cancellationToken))
+            try
             {
-                logger.LogInformation("Using the current Android device as the local cloud printer bridge.");
-                return false;
+                var js = services.GetService<IJSRuntime>();
+                if (js is not null && await js.InvokeAsync<bool>("restaurantOrdersAndroidPrinter.isAvailable", cancellationToken))
+                {
+                    logger.LogInformation("Using the current Android device as the local cloud printer node.");
+                    return false;
+                }
             }
-
-            var authentication = services.GetService<AuthenticationStateProvider>();
-            var postgres = services.GetService<CloudTenantPostgresDatabase>();
-            var state = authentication is null ? null : await authentication.GetAuthenticationStateAsync();
-            var storeIdText = state?.User.FindFirst("cloud_store_id")?.Value;
-            if (postgres is null || !Guid.TryParse(storeIdText, out var storeId))
+            catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                logger.LogWarning("Could not determine the cloud store or print-agent client; keeping the print batch queued for Windows.");
-                return true;
+                logger.LogDebug(exception, "No current-device Android printer bridge is available; queueing the cloud print batch for a local POS node.");
             }
+        }
 
-            return await postgres.HasRegisteredPrintAgentAsync(storeId, cancellationToken);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            // Fail closed: queueing is recoverable and avoids printing the same
-            // ticket both from the cloud server and a Windows sync agent.
-            logger.LogWarning(exception, "Could not check for a paired Windows print agent; keeping the cloud print batch queued.");
-            return true;
-        }
+        // Cloud-hosted code cannot reach a store's private LAN. Keep the accepted
+        // batch durable for the paired local Windows POS/print node; never fall
+        // back to sending raw TCP through the Docker host.
+        logger.LogInformation("Queueing cloud print batch for a local POS node (Windows USB required: {RequiresWindowsUsbPrinter}).",
+            requiresWindowsUsbPrinter);
+        return true;
     }
 }

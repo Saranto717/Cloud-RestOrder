@@ -5617,14 +5617,14 @@
             var messages = new List<string>
             {
                 dispatch.PendingOnWindows
-                    ? "Η παραγγελία καταχωρήθηκε και περιμένει τον τοπικό υπολογιστή για εκτύπωση."
+                    ? "Η παραγγελία καταχωρήθηκε και περιμένει την τοπική POS συσκευή για εκτύπωση."
                     : dispatch.SuccessfulStations.Count > 0
                     ? $"Η παραγγελία στάλθηκε σε: {string.Join(", ", dispatch.SuccessfulStations)}."
                     : "Η παραγγελία καταχωρήθηκε."
             };
 
             if (pendingFiscalOnWindows)
-                messages.Add("Η έκδοση και εκτύπωση του Δελτίου Παραγγελίας θα γίνει από τον τοπικό υπολογιστή.");
+                messages.Add("Η έκδοση και εκτύπωση του Δελτίου Παραγγελίας θα γίνει από την τοπική POS συσκευή.");
 
             if (dispatch.FailedStations.Count > 0)
                 messages.Add($"Αποτυχία εκτύπωσης στην κουζίνα/μπαρ: {string.Join(", ", dispatch.FailedStations)}.");
