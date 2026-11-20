@@ -1639,15 +1639,16 @@
     .mobile-order-trigger,
     .mobile-order-backdrop,
     .mobile-order-close,
-    .mobile-action-label { display:none; }
+    .mobile-action-label,
+    .mobile-order-dock { display:none; }
 
     @@media (max-width:680px) {
         .table-order-page {
             display:flex !important;
             flex-direction:column;
-            height:100% !important;
+            height:calc(100dvh - 62px) !important;
             min-height:0 !important;
-            padding:6px 6px calc(70px + env(safe-area-inset-bottom)) !important;
+            padding:6px 6px calc(76px + env(safe-area-inset-bottom)) !important;
             overflow:hidden !important;
         }
         .table-order-page > .nav-button { flex:0 0 auto; min-height:34px; margin:0 0 3px; padding:5px 9px; }
@@ -1662,7 +1663,7 @@
             grid-template-rows:minmax(0,1fr) !important;
             gap:5px;
             width:100%;
-            height:auto !important;
+            height:0 !important;
             min-height:0 !important;
             overflow:hidden !important;
         }
@@ -1703,10 +1704,21 @@
         .table-order-page .products-panel {
             grid-column:2 !important;
             grid-row:1 !important;
+            display:flex !important;
+            flex-direction:column !important;
             width:auto !important;
+            height:100% !important;
             min-height:0 !important;
             max-height:none !important;
             overflow:hidden !important;
+        }
+        .table-order-page .item-grid {
+            flex:1 1 0 !important;
+            height:0 !important;
+            min-height:0 !important;
+            grid-template-columns:repeat(var(--product-grid-columns, 2),minmax(0,1fr)) !important;
+            grid-template-rows:repeat(var(--product-grid-rows, 3),minmax(0,1fr)) !important;
+            align-content:stretch !important;
         }
         .table-order-page .products-panel-header { padding:6px 7px; }
         .table-order-page .products-panel-toolbar > small:last-child { display:none !important; }
@@ -1716,18 +1728,26 @@
         .table-order-page .menu-item-btn .price { font-size:.82em; }
 
         .table-order-page .order-panel:not(.mobile-open) { display:none !important; }
-        .table-order-page .mobile-order-trigger {
+        .table-order-page .mobile-order-dock {
             position:fixed;
             z-index:8000;
             left:7px;
             right:7px;
             bottom:max(7px,env(safe-area-inset-bottom));
             display:flex;
+            align-items:stretch;
+            gap:7px;
+        }
+        .table-order-page .mobile-order-trigger,
+        .table-order-page .mobile-order-send {
+            display:flex;
             align-items:center;
             justify-content:space-between;
-            gap:10px;
-            min-height:54px;
-            padding:8px 14px;
+            gap:8px;
+            flex:1 1 0;
+            min-width:0;
+            min-height:58px;
+            padding:7px 10px;
             border:1px solid #0a756d;
             border-radius:13px;
             background:linear-gradient(135deg,#087f76,#14536d);
@@ -1738,6 +1758,8 @@
             cursor:pointer;
             -webkit-tap-highlight-color:transparent;
         }
+        .table-order-page .mobile-order-send { justify-content:center; border-color:#16824c; background:linear-gradient(135deg,#16a34a,#087c58); font-size:.8rem; font-weight:850; text-align:center; }
+        .table-order-page .mobile-order-send:disabled { opacity:.5; cursor:not-allowed; }
         .mobile-order-trigger-copy { min-width:0; display:grid; gap:2px; }
         .mobile-order-trigger-copy strong { font-size:.9rem; line-height:1.1; }
         .mobile-order-trigger-copy small { color:#d9f5ee; font-size:.73rem; font-weight:700; }
@@ -1956,13 +1978,21 @@
     {
         <button type="button" class="mobile-order-backdrop" aria-label="Κλείσιμο ελέγχου παραγγελίας" @onclick="CloseMobileOrderPanel"></button>
     }
-    <button type="button" class="mobile-order-trigger" aria-expanded="@mobileOrderOpen" @onclick="ToggleMobileOrderPanel">
-        <span class="mobile-order-trigger-copy">
-            <strong>Παραγγελία · @ActiveOrderLineCount είδη</strong>
-            <small>Σύνολο €@CurrentOrderTotal.ToString("0.00")</small>
-        </span>
-        <span class="mobile-order-trigger-action">@(mobileOrderOpen ? "Κλείσιμο ×" : "Έλεγχος ›")</span>
-    </button>
+    @if (!mobileOrderOpen)
+    {
+        <div class="mobile-order-dock">
+            <button type="button" class="mobile-order-trigger" aria-expanded="false" @onclick="ToggleMobileOrderPanel">
+                <span class="mobile-order-trigger-copy">
+                    <strong>Παραγγελία · @ActiveOrderLineCount είδη</strong>
+                    <small>Σύνολο €@CurrentOrderTotal.ToString("0.00")</small>
+                </span>
+                <span class="mobile-order-trigger-action">Έλεγχος ›</span>
+            </button>
+            <button type="button" class="mobile-order-send" disabled="@(sendingOrder || (isTakeAwayMode ? !order.Items.Any(i => !i.IsCancelled && RemainingQuantityForItem(i) > 0) : !order.Items.Any(i => !i.IsPrinted && !i.IsCancelled)))" @onclick="@(isTakeAwayMode ? OpenTakeAwayPayment : SendOrderAsync)">
+                @(sendingOrder ? "⏳ Αποστολή…" : "📤 Αποστολή παραγγελίας")
+            </button>
+        </div>
+    }
 
     <div class="order-layout">
         <div class="category-panel">
@@ -3460,6 +3490,11 @@
 
         productsLayoutReference = DotNetObjectReference.Create(this);
         await JS.InvokeVoidAsync("restaurantOrders.observeProductGrid", productsPanelElement, productsLayoutReference);
+        if (PrintBillQuery && !isTakeAwayMode)
+        {
+            PrintBillQuery = false;
+            await PrintBill();
+        }
         await InvokeAsync(StateHasChanged);
     }
 
@@ -3648,6 +3683,7 @@
     [Parameter] public int TableId { get; set; }
     [SupplyParameterFromQuery(Name = "takeaway")] public bool TakeAwayQuery { get; set; }
     [SupplyParameterFromQuery(Name = "takeawayOrderId")] public int? TakeAwayOrderId { get; set; }
+    [SupplyParameterFromQuery(Name = "printBill")] public bool PrintBillQuery { get; set; }
     private bool isTakeAwayMode;
     private bool HasUnsentTakeAwayItems => order.Items.Any(i => !i.IsPrinted && !i.IsCancelled);
     private bool HasSentTakeAwayItems => order.Items.Any(i => i.IsPrinted && !i.IsCancelled && RemainingQuantityForItem(i) > 0);

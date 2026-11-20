@@ -1,6 +1,9 @@
 // Σύντομο "ding" όταν στέλνεται επιτυχώς μια παραγγελία στην κουζίνα/μπαρ.
 // Χρησιμοποιεί το Web Audio API, δεν χρειάζεται αρχείο ήχου.
 window.restaurantOrders = window.restaurantOrders || {};
+window.restaurantOrders.isWideTableBoard = function () {
+    return window.matchMedia('(min-width: 960px) and (min-height: 600px)').matches;
+};
 window.restaurantOrders.observeProductGrid = function (panel, dotNetRef) {
     if (!panel || !dotNetRef) return;
     if (panel._productGridCleanup) panel._productGridCleanup();
