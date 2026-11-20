@@ -4,17 +4,10 @@ WORKDIR /src
 COPY server/RestaurantOrders.csproj server/
 RUN dotnet restore server/RestaurantOrders.csproj
 
-COPY server/CloudPrintBridge/CloudPrintBridge.csproj server/CloudPrintBridge/
-RUN dotnet restore server/CloudPrintBridge/CloudPrintBridge.csproj
-
 COPY server/ server/
 RUN dotnet publish server/RestaurantOrders.csproj \
     --configuration Release \
     --output /out \
-    --no-restore
-RUN dotnet publish server/CloudPrintBridge/CloudPrintBridge.csproj \
-    --configuration Release \
-    --output /out/print-bridge \
     --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
