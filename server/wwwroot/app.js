@@ -207,6 +207,31 @@ document.addEventListener('dragstart', function (event) {
     event.dataTransfer.effectAllowed = 'move';
 });
 
+// Keep the compact POS navigation usable even if the Blazor Server circuit is
+// reconnecting. Opening/closing the menu is presentation-only and should not
+// need a round trip to the cloud server.
+document.addEventListener('click', function (event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+
+    const toggle = target.closest('[data-nav-toggle="true"]');
+    if (toggle) {
+        const nav = toggle.closest('nav');
+        const links = nav?.querySelector('.nav-links');
+        if (!links) return;
+        const isOpen = links.classList.toggle('is-open');
+        toggle.setAttribute('aria-expanded', String(isOpen));
+        return;
+    }
+
+    if (target.closest('.topbar .nav-links a')) {
+        document.querySelectorAll('.topbar nav').forEach(nav => {
+            nav.querySelector('.nav-links')?.classList.remove('is-open');
+            nav.querySelector('[data-nav-toggle="true"]')?.setAttribute('aria-expanded', 'false');
+        });
+    }
+});
+
 
 // Native Android network-printer bridge. A browser cannot open raw TCP sockets;
 // the RestaurantOrders Android WebView sends ESC/POS directly over the shop LAN.

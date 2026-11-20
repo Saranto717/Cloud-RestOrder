@@ -254,6 +254,13 @@ public class PrinterService
             if (jobKind == PrintJobKind.KitchenOrder && !station.PrintOrders) return true;
             if (jobKind == PrintJobKind.FiscalDocument && !station.PrintFiscalDocuments) return true;
 
+            if (_cloudWebMode)
+            {
+                LastPrintError = "Η εκτύπωση USB χρειάζεται τοπική εφαρμογή Windows με εγκατεστημένη ουρά εκτυπωτή.";
+                if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
+                return false;
+            }
+
             try
             {
                 WindowsRawPrinter.Send(station.WindowsPrinterName, bytes, station.Copies);
@@ -287,37 +294,25 @@ public class PrinterService
             return false;
         }
 
-        // A normal browser cannot open a raw TCP connection to a LAN printer.
-        // Cloud mode uses a token-protected host-network relay, since the app
-        // container itself cannot route to devices on the shop LAN.
-        if (_cloudWebMode)
-            return await SendViaCloudPrintBridgeAsync(station, printerAddress, bytes, jobKind);
+        // A normal browser cannot open raw TCP sockets. The RestaurantOrders
+        // Android app can, and it is in the shop LAN even when its page is served
+        // by Cloud POS. Prefer that device-side path before the cloud-host relay.
+        var androidResult = await TrySendViaAndroidPrinterAsync(station, bytes, jobKind);
+        if (androidResult.HasValue)
+            return androidResult.Value;
 
-        // The Android bridge is only for locally hosted POS.
-        if (!_cloudWebMode)
+        // A cloud host/container is not a print node and must not open a socket
+        // to a printer on the store LAN. Cloud orders are queued by
+        // CloudPrintAgentResolver; a generic browser cannot run this test print.
+        if (_cloudWebMode)
         {
-            try
-            {
-                var clientResult = await _js.InvokeAsync<string>("restaurantOrdersAndroidPrinter.printTcpRaw",
-                    station.IpAddress, station.Port, Convert.ToBase64String(bytes), Math.Clamp(station.Copies, 1, 5));
-                if (string.Equals(clientResult, "printed", StringComparison.Ordinal))
-                {
-                    _logger.LogInformation("Η εκτύπωση {Kind} στάλθηκε τοπικά από Android στη {Name} ({Ip}:{Port})",
-                        jobKind, station.Name, station.IpAddress, station.Port);
-                    return true;
-                }
-            }
-            catch (Exception ex)
-            {
-                // A native client may have accepted the ticket before its reply was
-                // lost. Do not also send it from the server and risk a duplicate.
-                _logger.LogError(ex, "Αποτυχία τοπικής Android εκτύπωσης στον {Name} ({Ip}:{Port})",
-                    station.Name, station.IpAddress, station.Port);
-                LastPrintError = $"Android: {ex.Message}";
-                if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
-                return false;
-            }
+            LastPrintError = "Η σελίδα Cloud δεν έχει πρόσβαση στο τοπικό Wi‑Fi. Άνοιξε την εφαρμογή POS στη συσκευή που είναι συνδεδεμένη με τον εκτυπωτή.";
+            if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
+            _logger.LogWarning("Η εκτύπωση {Kind} στον {Name} δεν στάλθηκε: δεν υπάρχει τοπική γέφυρα εκτύπωσης στον client.",
+                jobKind, station.Name);
+            return false;
         }
+
         try
         {
             using var client = new TcpClient();
@@ -347,6 +342,54 @@ public class PrinterService
             LastPrintError = ex is SocketException socketError
                 ? $"Δικτυακό σφάλμα ({socketError.SocketErrorCode}) προς {station.IpAddress}:{station.Port}."
                 : ex.Message;
+            if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Sends network ESC/POS from the current Android app when available.
+    /// Returns null when there is no native Android bridge, allowing the caller
+    /// to use its normal local or cloud-host transport.
+    /// </summary>
+    private async Task<bool?> TrySendViaAndroidPrinterAsync(PrinterStation station, byte[] bytes, PrintJobKind jobKind)
+    {
+        bool available;
+        try
+        {
+            available = await _js.InvokeAsync<bool>("restaurantOrdersAndroidPrinter.isAvailable");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Δεν είναι διαθέσιμο το Android print bridge για τον σταθμό {Name}.", station.Name);
+            return null;
+        }
+
+        if (!available)
+            return null;
+
+        try
+        {
+            var clientResult = await _js.InvokeAsync<string>("restaurantOrdersAndroidPrinter.printTcpRaw",
+                station.IpAddress, station.Port, Convert.ToBase64String(bytes), Math.Clamp(station.Copies, 1, 5));
+            if (string.Equals(clientResult, "printed", StringComparison.Ordinal))
+            {
+                _logger.LogInformation("Η εκτύπωση {Kind} στάλθηκε από Android στη {Name} ({Ip}:{Port})",
+                    jobKind, station.Name, station.IpAddress, station.Port);
+                return true;
+            }
+
+            LastPrintError = $"Android: δεν ολοκληρώθηκε η τοπική εκτύπωση στον {station.IpAddress}:{station.Port}.";
+            if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
+            return false;
+        }
+        catch (Exception ex)
+        {
+            // The device may have printed before its acknowledgement was lost.
+            // Do not resend through the cloud relay and risk a duplicate ticket.
+            _logger.LogError(ex, "Αποτυχία τοπικής Android εκτύπωσης στον {Name} ({Ip}:{Port})",
+                station.Name, station.IpAddress, station.Port);
+            LastPrintError = $"Android: {ex.Message}";
             if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
             return false;
         }
