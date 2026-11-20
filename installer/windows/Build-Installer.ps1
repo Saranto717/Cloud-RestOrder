@@ -1,5 +1,5 @@
 param(
-    [string]$Version = '17.3.136'
+    [string]$Version = '17.3.137'
 )
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -12,7 +12,9 @@ dotnet publish $project -c Release -r win-x64 --self-contained true -o $publish 
     -p:Version=$Version -p:DebugType=None -p:DebugSymbols=false -p:PublishSingleFile=false
 if ($LASTEXITCODE -ne 0) { throw 'Self-contained publish failed.' }
 $forbidden = Get-ChildItem $publish -Recurse -File | Where-Object {
-    $_.Extension -in @('.cs', '.razor', '.csproj', '.sln', '.pdb', '.db', '.sqlite', '.log') -or $_.Name -match '\.db-(wal|shm)$'
+    $_.Extension -in @('.cs', '.razor', '.csproj', '.sln', '.pdb', '.db', '.sqlite', '.log') -or
+    $_.Name -match '\.db-(wal|shm)$' -or
+    $_.FullName -match '[\\/]CloudPrintBridge[\\/]'
 }
 if ($forbidden) { throw ('Publish contains forbidden files: ' + (($forbidden | ForEach-Object { $_.FullName.Substring($publish.Length + 1) }) -join ', ')) }
 $compilerCandidates = if ($env:INNO_SETUP_COMPILER) {

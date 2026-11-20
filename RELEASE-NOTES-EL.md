@@ -1,3 +1,9 @@
+# RestaurantOrders 17.3.137
+
+- Η Cloud σελίδα μπορεί να στέλνει ESC/POS σε δικτυακούς ή USB εκτυπωτές μέσω της τοπικής υπηρεσίας Windows στον ίδιο υπολογιστή.
+- Η τοπική γέφυρα δέχεται αιτήματα μόνο από το εγκεκριμένο HTTPS Cloud POS origin και το loopback του υπολογιστή.
+- Ο browser ζητά άδεια πρόσβασης στο loopback· δεν απαιτείται Docker bridge ή εκτυπωτής προσβάσιμος από τον cloud server.
+
 # RestaurantOrders 17.3.131
 
 - Διορθώθηκε το 500 κατά το άνοιγμα cloud τραπεζιού στην PostgreSQL.
