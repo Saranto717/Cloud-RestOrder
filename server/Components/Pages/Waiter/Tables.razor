@@ -190,11 +190,50 @@
     .pending-fiscal-footer span { color:#64748b; font-size:.85rem; }
     @@media(max-width:600px) { .pending-fiscal-launch { left:12px; right:12px; bottom:calc(12px + env(safe-area-inset-bottom)); justify-content:center; } .pending-fiscal-row { grid-template-columns:1fr; } .pending-fiscal-actions,.pending-fiscal-row button { width:100%; } .pending-fiscal-footer { align-items:stretch; flex-direction:column; } }
 
+    /* Wide POS board: keep the floor plan and selected table actions together. */
+    @@media (min-width: 960px) and (min-height: 600px) {
+        .tables-page { height:calc(100dvh - 62px); min-height:0; display:flex; flex-direction:column; overflow:hidden; padding:12px 14px; }
+        .tables-page .waiter-topbar { flex:0 0 auto; margin-bottom:10px; padding:10px 14px; }
+        .tables-page .category-tabs { flex:0 0 auto; justify-content:flex-start; gap:8px; margin:0 0 10px; }
+        .tables-page .cat-tab { min-width:110px; min-height:42px; }
+        .table-board-workspace { display:grid; grid-template-columns:minmax(0,1fr) clamp(270px,25vw,350px); gap:12px; flex:1 1 0; min-height:0; }
+        .table-board-main { display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; }
+        .table-board-main > h3 { flex:0 0 auto; margin:5px 4px; }
+        .table-board-main .floorplan-view { flex:1 1 0; width:100%; height:auto; min-height:260px; margin:0; overflow:hidden; border:1px solid #344967; border-radius:17px; background-color:#dce5f1; background-image:linear-gradient(rgba(46,68,96,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(46,68,96,.07) 1px,transparent 1px); background-size:24px 24px; box-shadow:0 10px 26px rgba(12,25,48,.14); }
+        .table-board-main .table-area-list { flex:0 1 26%; min-height:90px; display:flex; gap:8px; overflow:auto; }
+        .table-board-main .table-area-section { flex:0 0 auto; min-width:min(100%,320px); }
+        .table-board-workspace .floor-table-btn.board-selected,
+        .table-board-workspace .table-btn.board-selected { outline:3px solid #21a9e2; outline-offset:2px; z-index:4; box-shadow:0 0 0 5px rgba(33,169,226,.18),0 8px 20px rgba(13,32,61,.24); }
+        .selected-table-panel { display:flex; flex-direction:column; min-width:0; min-height:0; padding:16px; border:1px solid #243a5e; border-radius:18px; background:linear-gradient(155deg,#172b4f,#0e1c37 70%); color:#f5f8ff; box-shadow:0 12px 28px rgba(11,25,51,.22); overflow:auto; }
+        .selected-table-eyebrow { color:#9db7da; font-size:.72rem; font-weight:850; letter-spacing:.12em; text-transform:uppercase; }
+        .selected-table-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:7px 0 14px; border-bottom:1px solid rgba(192,211,239,.18); }
+        .selected-table-heading h3 { margin:0; color:#fff; font-size:1.22rem; }
+        .selected-table-status { padding:5px 9px; border-radius:999px; background:#234333; color:#9af0b6; font-size:.72rem; font-weight:850; white-space:nowrap; }
+        .selected-table-status.available { background:#223652; color:#bdd4f5; }
+        .selected-table-stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:13px 0; }
+        .selected-table-stat { padding:10px; border:1px solid rgba(192,211,239,.13); border-radius:12px; background:rgba(255,255,255,.055); }
+        .selected-table-stat small,.selected-table-info small { display:block; color:#9db1cd; font-size:.7rem; }
+        .selected-table-stat strong { display:block; margin-top:4px; color:#fff; font-size:1.03rem; }
+        .selected-table-info { display:grid; gap:10px; padding:12px 0; color:#f3f7ff; font-size:.87rem; }
+        .selected-table-order-lines { flex:1 1 auto; min-height:50px; margin:3px 0 12px; padding:11px; border:1px solid rgba(192,211,239,.15); border-radius:12px; background:rgba(255,255,255,.045); }
+        .selected-table-order-lines h4 { margin:0 0 8px; color:#fff; font-size:.83rem; }
+        .selected-table-order-lines p { margin:3px 0; color:#d3def0; font-size:.78rem; }
+        .selected-table-order-lines .selected-table-total { margin-top:9px; color:#8de7c0; font-size:1.02rem; font-weight:900; }
+        .selected-table-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+        .selected-table-actions button { min-width:0; min-height:46px; padding:8px; border:1px solid #3e577b; border-radius:11px; background:#243b60; color:#f6f9ff; font:inherit; font-size:.78rem; font-weight:800; cursor:pointer; }
+        .selected-table-actions button:hover:not(:disabled) { background:#2e4b78; }
+        .selected-table-actions button.primary { grid-column:1 / -1; min-height:50px; border-color:#147fd3; background:linear-gradient(135deg,#1478e8,#165ac5); font-size:.9rem; }
+        .selected-table-actions button:disabled { opacity:.42; cursor:not-allowed; }
+    }
+
     /* Compact table board for portrait phones and small tablets. */
     .tables-page .waiter-topbar > .linkbtn-plain,
     .tables-page .waiter-topbar > .hint,
     .tables-page .waiter-topbar-main p.hint { display:none !important; }
     @@media (max-width: 820px) {
+        .table-board-workspace { display:contents; }
+        .table-board-main { display:flex; flex:1 1 0; flex-direction:column; min-height:0; overflow:hidden; }
+        .selected-table-panel { display:none !important; }
         .tables-page {
             display: flex !important;
             flex-direction: column;
@@ -243,6 +282,11 @@
         .tables-page .takeaway-start-btn { padding: 5px 7px; font-size: .76rem; }
         .tables-page .tile-scale-control .tile-scale-value { min-width: 34px; font-size: .75rem; }
         .tables-page .tile-scale-control button { width: 27px; height: 27px; }
+    }
+    @@media (min-width: 821px) and (max-width: 959px) {
+        .table-board-workspace { display:contents; }
+        .table-board-main { display:flex; flex:1 1 0; flex-direction:column; min-height:0; overflow:hidden; }
+        .selected-table-panel { display:none !important; }
     }
 </style>
 
@@ -321,7 +365,7 @@
     @if (transferMode)
     {
         <div class="transfer-mode-banner">
-            <div><strong>🔀 Μεταφορά από «@transferSourceName»</strong><p>Πάτησε στο τραπέζι προορισμού στην κάτοψη. Θα ζητηθεί επιβεβαίωση πριν γίνει η μεταφορά.</p></div>
+            <div><strong>🔀 @(MergeOnly ? "Συγχώνευση με αφετηρία" : "Μεταφορά από") «@transferSourceName»</strong><p>@(MergeOnly ? "Πάτησε σε τραπέζι με ενεργή παραγγελία. Θα ζητηθεί επιβεβαίωση πριν συγχωνευτούν." : "Πάτησε στο τραπέζι προορισμού στην κάτοψη. Θα ζητηθεί επιβεβαίωση πριν γίνει η μεταφορά.")</p></div>
             <button class="transfer-cancel" type="button" @onclick="CancelTransferMode">Ακύρωση μεταφοράς</button>
         </div>
     }
@@ -335,8 +379,8 @@
         <div class="transfer-confirmation" role="dialog" aria-modal="true" aria-labelledby="transfer-confirm-title" @onclick="CancelDestinationConfirmation">
             <section class="transfer-confirmation-card" @onclick:stopPropagation="true">
                 <div class="transfer-confirmation-icon" aria-hidden="true">🔀</div>
-                <h3 id="transfer-confirm-title">Επιβεβαίωση μεταφοράς</h3>
-                <p>Να μεταφερθεί όλη η παραγγελία στο επιλεγμένο τραπέζι;</p>
+                <h3 id="transfer-confirm-title">@(MergeOnly ? "Επιβεβαίωση συγχώνευσης" : "Επιβεβαίωση μεταφοράς")</h3>
+                <p>@(MergeOnly ? "Να συγχωνευτεί η παραγγελία με το επιλεγμένο τραπέζι;" : "Να μεταφερθεί όλη η παραγγελία στο επιλεγμένο τραπέζι;")</p>
                 <div class="transfer-confirmation-route">@transferSourceName <span aria-hidden="true">→</span> @transferDestination.Name</div>
                 @if (occupiedTableIds.Contains(transferDestination.Id))
                 {
@@ -345,7 +389,7 @@
                 @if (!string.IsNullOrWhiteSpace(transferPageMessage)) { <p class="error" role="alert">@transferPageMessage</p> }
                 <div class="transfer-confirmation-actions">
                     <button class="transfer-dialog-cancel" type="button" disabled="@transferBusy" @onclick="CancelDestinationConfirmation">Άκυρο</button>
-                    <button class="transfer-confirm" type="button" disabled="@transferBusy" @onclick="ConfirmFloorplanTransferAsync">@(transferBusy ? "Μεταφορά…" : "Ναι, μεταφορά")</button>
+                    <button class="transfer-confirm" type="button" disabled="@transferBusy" @onclick="ConfirmFloorplanTransferAsync">@(transferBusy ? "Επεξεργασία…" : MergeOnly ? "Ναι, συγχώνευση" : "Ναι, μεταφορά")</button>
                 </div>
             </section>
         </div>
@@ -383,14 +427,14 @@
         <div class="category-tabs">
 
             <button class="cat-tab @(selectedAreaId == 0 ? "active" : "")"
-                    @onclick="() => selectedAreaId = 0">
+                    @onclick="() => SelectArea(0)">
                 Όλα τα τραπέζια
             </button>
 
             @foreach (var a in areas)
             {
                 <button class="cat-tab @(selectedAreaId == a.Id ? "active" : "")"
-                        @onclick="() => selectedAreaId = a.Id">
+                        @onclick="() => SelectArea(a.Id)">
                     @a.Name
                 </button>
             }
@@ -413,6 +457,8 @@
         </div>
     }
 
+    <div class="table-board-workspace">
+    <main class="table-board-main">
     @if (PositionedTables.Any())
     {
         <div class="floorplan-view">
@@ -421,13 +467,13 @@
             {
                 var total = totalsByTable.GetValueOrDefault(t.Id, 0m);
 
-                <button class="floor-table-btn @(occupiedTableIds.Contains(t.Id) ? "occupied" : "")"
+                <button class="floor-table-btn @(occupiedTableIds.Contains(t.Id) ? "occupied" : "") @(selectedTableId == t.Id ? "board-selected" : "")"
                         @key="t.Id"
                         style="left:@(t.PosX)%; top:@(t.PosY)%; @GetTableTileStyle(t) @GetFloorTileSizeStyle(t)"
                         @oncontextmenu="() => OpenTableStyle(t)"
                         @oncontextmenu:preventDefault="true"
                         @oncontextmenu:stopPropagation="true"
-                        @onclick="() => GoToTable(t.Id)">
+                        @onclick="() => SelectOrOpenTableAsync(t.Id)">
 
                     <span class="table-name-line">
                         @if (occupiedTableIds.Contains(t.Id))
@@ -471,12 +517,12 @@
             {
                 var total = totalsByTable.GetValueOrDefault(t.Id, 0m);
 
-                <button class="table-btn @(occupiedTableIds.Contains(t.Id) ? "occupied" : "")"
+                <button class="table-btn @(occupiedTableIds.Contains(t.Id) ? "occupied" : "") @(selectedTableId == t.Id ? "board-selected" : "")"
                         style="@GetTableTileStyle(t)"
                         @oncontextmenu="() => OpenTableStyle(t)"
                         @oncontextmenu:preventDefault="true"
                         @oncontextmenu:stopPropagation="true"
-                        @onclick="() => GoToTable(t.Id)">
+                        @onclick="() => SelectOrOpenTableAsync(t.Id)">
 
                     <span class="table-name-line">
                         @if (occupiedTableIds.Contains(t.Id))
@@ -503,6 +549,63 @@
         }
         </div>
     }
+    </main>
+    @if (!transferMode && !TakeAwayOnlyEdition)
+    {
+        var selectedTable = tables.FirstOrDefault(t => t.Id == selectedTableId);
+        var selectedOrders = selectedTableId is int tableId && openOrdersByTable.TryGetValue(tableId, out var tableOrders)
+            ? tableOrders
+            : new List<Order>();
+        var selectedOrder = selectedOrders.OrderByDescending(o => o.CreatedAt).FirstOrDefault();
+        var selectedItems = selectedOrders.SelectMany(o => o.Items).Where(i => !i.IsCancelled && i.Quantity > 0).ToList();
+        <aside class="selected-table-panel" aria-label="Στοιχεία επιλεγμένου τραπεζιού">
+            @if (selectedTable is not null)
+            {
+                <span class="selected-table-eyebrow">Table service</span>
+                <div class="selected-table-heading">
+                    <h3>🪑 @selectedTable.Name</h3>
+                    <span class="selected-table-status @(selectedItems.Count == 0 ? "available" : "")">@(selectedItems.Count == 0 ? "Διαθέσιμο" : "Σε εξέλιξη")</span>
+                </div>
+                <div class="selected-table-stats">
+                    <div class="selected-table-stat"><small>Διάρκεια</small><strong>@(occupiedTableIds.Contains(selectedTable.Id) ? GetOccupiedDuration(selectedTable.Id) : "—")</strong></div>
+                    <div class="selected-table-stat"><small>Είδη</small><strong>@selectedItems.Sum(i => Math.Max(0, i.Quantity))</strong></div>
+                </div>
+                <div class="selected-table-info">
+                    <span><small>Σερβιτόρος</small>@(selectedOrder?.WaiterUser?.FullName ?? "—")</span>
+                    <span><small>Ανοικτές παραγγελίες</small>@selectedOrders.Count</span>
+                </div>
+                <section class="selected-table-order-lines">
+                    <h4>Παραγγελία</h4>
+                    @if (selectedOrder is null)
+                    {
+                        <p>Δεν υπάρχει ενεργή παραγγελία.</p>
+                    }
+                    else
+                    {
+                        @foreach (var line in selectedItems.Take(4))
+                        {
+                            <p>@line.Quantity × @(line.MenuItem?.Name ?? "Είδος")</p>
+                        }
+                        @if (selectedItems.Count > 4) { <p>και @(selectedItems.Count - 4) ακόμη είδη…</p> }
+                        <p class="selected-table-total">Σύνολο €@totalsByTable.GetValueOrDefault(selectedTable.Id, 0m).ToString("0.00")</p>
+                    }
+                </section>
+                <div class="selected-table-actions">
+                    <button class="primary" type="button" @onclick="() => OpenSelectedTable(selectedTable.Id)">Άνοιγμα παραγγελίας</button>
+                    <button type="button" disabled="@(selectedOrder is null)" @onclick="() => PrintSelectedTableBill(selectedTable.Id)">🧾 Λογαριασμός</button>
+                    <button type="button" disabled="@(selectedOrders.Count != 1)" @onclick="() => BeginFloorplanTransfer(selectedTable.Id, false)">🔀 Μεταφορά</button>
+                    <button type="button" disabled="@(selectedOrders.Count != 1 || occupiedTableIds.Count < 2)" @onclick="() => BeginFloorplanTransfer(selectedTable.Id, true)">⤢ Συγχώνευση</button>
+                </div>
+            }
+            else
+            {
+                <span class="selected-table-eyebrow">Table service</span>
+                <h3>Επίλεξε τραπέζι</h3>
+                <p>Πάτησε σε ένα τραπέζι στην κάτοψη για να δεις την παραγγελία και τις ενέργειες.</p>
+            }
+        </aside>
+    }
+    </div>
     }
 
     @if (pendingFiscalRows.Any(r => r.BatchId is null))
@@ -623,6 +726,9 @@
 
     [SupplyParameterFromQuery(Name = "transferOrder")]
     public int? TransferOrderId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "mergeOnly")]
+    public bool MergeOnly { get; set; }
 
     [SupplyParameterFromQuery(Name = "startTakeAway")]
     public bool StartTakeAwayQuery { get; set; }
@@ -808,6 +914,8 @@
 
     private List<RestaurantTable> tables = new();
     private List<TableArea> areas = new();
+    private Dictionary<int, List<Order>> openOrdersByTable = new();
+    private int? selectedTableId;
     private Dictionary<int, decimal> totalsByTable = new();
     private HashSet<int> occupiedTableIds = new();
     private HashSet<int> pendingTransferTables = new();
@@ -887,9 +995,12 @@
 
         var openOrders = await db.Orders
             .Where(o => o.Status == OrderStatus.Open)
+            .Include(o => o.WaiterUser)
             .Include(o => o.Items)
                 .ThenInclude(i => i.MenuItem)
             .ToListAsync();
+        openOrdersByTable = openOrders.GroupBy(o => o.RestaurantTableId)
+            .ToDictionary(g => g.Key, g => g.OrderBy(o => o.CreatedAt).ToList());
 
         // A table tile shows the unpaid balance, not the original ordered total.
         // Only successfully issued payments reduce the remaining item quantities.
@@ -917,6 +1028,9 @@
                     .Sum(i => Math.Max(0, i.Quantity - paidQuantitiesByItem.GetValueOrDefault(i.Id, 0))
                         * ((i.MenuItem?.Price ?? 0) + i.ExtrasPrice))
             );
+        selectedTableId = occupiedTableIds.OrderBy(id => tables.FindIndex(t => t.Id == id)).FirstOrDefault();
+        if (selectedTableId == 0 || !tables.Any(t => t.Id == selectedTableId))
+            selectedTableId = tables.FirstOrDefault()?.Id;
 
         pendingFiscalRows = (await FiscalDocuments.GetPendingTransmissionsAsync(db)).ToList();
         archivedFiscalRows = await FiscalOutboxArchive.ListArchivedAsync(db);
@@ -1128,12 +1242,52 @@
                 transferPageMessage = "Το τραπέζι συμμετέχει ήδη σε εκκρεμή μεταφορά και δεν είναι διαθέσιμο.";
                 return;
             }
+            if (MergeOnly && !occupiedTableIds.Contains(id))
+            {
+                transferPageMessage = "Για συγχώνευση, διάλεξε τραπέζι με ενεργή παραγγελία.";
+                return;
+            }
             transferPageMessage = null;
             transferDestination = tables.FirstOrDefault(t => t.Id == id);
             showTransferConfirmation = transferDestination is not null;
             return;
         }
         Nav.NavigateTo($"/waiter/table/{id}");
+    }
+
+    private async Task SelectOrOpenTableAsync(int id)
+    {
+        if (transferMode)
+        {
+            GoToTable(id);
+            return;
+        }
+
+        var wideBoard = await JS.InvokeAsync<bool>("restaurantOrders.isWideTableBoard");
+        if (wideBoard)
+        {
+            selectedTableId = id;
+            return;
+        }
+
+        GoToTable(id);
+    }
+
+    private void OpenSelectedTable(int tableId) => Nav.NavigateTo($"/waiter/table/{tableId}");
+
+    private void PrintSelectedTableBill(int tableId) => Nav.NavigateTo($"/waiter/table/{tableId}?printBill=true", forceLoad: true);
+
+    private void BeginFloorplanTransfer(int tableId, bool mergeOnly)
+    {
+        if (!openOrdersByTable.TryGetValue(tableId, out var orders) || orders.Count != 1) return;
+        Nav.NavigateTo($"/waiter?transferFrom={tableId}&transferOrder={orders[0].Id}&mergeOnly={mergeOnly.ToString().ToLowerInvariant()}", forceLoad: true);
+    }
+
+    private void SelectArea(int areaId)
+    {
+        selectedAreaId = areaId;
+        if (!FilteredTables.Any(t => t.Id == selectedTableId))
+            selectedTableId = FilteredTables.FirstOrDefault()?.Id;
     }
 
     private async Task StartTakeAwayAsync()
