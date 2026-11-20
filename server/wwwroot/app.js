@@ -251,6 +251,58 @@ window.restaurantOrdersAndroidPrinter = {
     }
 };
 
+// A Windows browser cannot open raw TCP sockets. When the full Windows POS is
+// installed on this same computer, its loopback endpoint sends the ESC/POS job
+// to the shop printer (TCP) or to the installed Windows printer queue (USB).
+window.restaurantOrdersWindowsPrinter = (() => {
+    const endpoint = 'http://127.0.0.1:5080/api/local-print';
+
+    return {
+        isAvailable: async () => {
+            try {
+                const response = await fetch(`${endpoint}/health`, {
+                    method: 'GET',
+                    mode: 'cors',
+                    targetAddressSpace: 'loopback',
+                    credentials: 'omit',
+                    cache: 'no-store'
+                });
+                return response.ok;
+            } catch {
+                return false;
+            }
+        },
+        printRaw: async (connectionType, ipAddress, port, printerName, dataBase64, copies) => {
+            let response;
+            try {
+                response = await fetch(`${endpoint}/raw`, {
+                    method: 'POST',
+                    mode: 'cors',
+                    targetAddressSpace: 'loopback',
+                    credentials: 'omit',
+                    cache: 'no-store',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        connectionType: String(connectionType || 'Tcp'),
+                        ipAddress: String(ipAddress || ''),
+                        port: Number(port) || 0,
+                        printerName: String(printerName || ''),
+                        dataBase64: String(dataBase64 || ''),
+                        copies: Number(copies) || 1
+                    })
+                });
+            } catch (error) {
+                throw new Error('Δεν συνδέθηκε η Cloud σελίδα με την τοπική υπηρεσία εκτύπωσης των Windows. Έλεγξε ότι είναι ενεργή και επέτρεψε την πρόσβαση στο τοπικό δίκτυο στον browser.');
+            }
+
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.ok)
+                throw new Error(result.error || `Η τοπική υπηρεσία Windows επέστρεψε σφάλμα (${response.status}).`);
+            return 'printed';
+        }
+    };
+})();
+
 window.sunmiPrinter = (() => {
     const embedded = window.parent && window.parent !== window;
     const pending = new Map();

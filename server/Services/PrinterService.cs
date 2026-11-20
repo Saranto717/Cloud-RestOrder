@@ -231,7 +231,11 @@ public class PrinterService
 
             if (_cloudWebMode)
             {
-                LastPrintError = "Η εκτύπωση USB χρειάζεται τοπική εφαρμογή Windows με εγκατεστημένη ουρά εκτυπωτή.";
+                var windowsResult = await TrySendViaWindowsPrinterBridgeAsync(station, bytes, jobKind);
+                if (windowsResult.HasValue)
+                    return windowsResult.Value;
+
+                LastPrintError = "Η εκτύπωση USB από το Cloud χρειάζεται ενεργή τοπική υπηρεσία RestaurantOrders στα Windows και εγκατεστημένη ουρά εκτυπωτή.";
                 if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
                 return false;
             }
@@ -276,12 +280,19 @@ public class PrinterService
         if (androidResult.HasValue)
             return androidResult.Value;
 
-        // A cloud host/container is not a print node and must not open a socket
-        // to a printer on the store LAN. Cloud orders are queued by
-        // CloudPrintAgentResolver; a generic browser cannot run this test print.
         if (_cloudWebMode)
         {
-            LastPrintError = "Η σελίδα Cloud δεν έχει πρόσβαση στο τοπικό Wi‑Fi. Άνοιξε την εφαρμογή POS στη συσκευή που είναι συνδεδεμένη με τον εκτυπωτή.";
+            var windowsResult = await TrySendViaWindowsPrinterBridgeAsync(station, bytes, jobKind);
+            if (windowsResult.HasValue)
+                return windowsResult.Value;
+        }
+
+        // A cloud host/container is not a print node and must not open a socket
+        // to a printer on the store LAN. Without a device-side Android or Windows
+        // bridge, cloud orders are queued by CloudPrintAgentResolver.
+        if (_cloudWebMode)
+        {
+            LastPrintError = "Δεν βρέθηκε τοπική γέφυρα εκτύπωσης. Σε Windows χρειάζεται ενεργή υπηρεσία RestaurantOrders στον ίδιο υπολογιστή και άδεια τοπικού δικτύου στον browser· σε Android άνοιξε την εφαρμογή RestaurantOrders.";
             if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
             _logger.LogWarning("Η εκτύπωση {Kind} στον {Name} δεν στάλθηκε: δεν υπάρχει τοπική γέφυρα εκτύπωσης στον client.",
                 jobKind, station.Name);
@@ -365,6 +376,57 @@ public class PrinterService
             _logger.LogError(ex, "Αποτυχία τοπικής Android εκτύπωσης στον {Name} ({Ip}:{Port})",
                 station.Name, station.IpAddress, station.Port);
             LastPrintError = $"Android: {ex.Message}";
+            if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Sends ESC/POS from a Cloud POS browser on Windows to the locally installed
+    /// RestaurantOrders service, which has access to the shop LAN and Windows queues.
+    /// </summary>
+    private async Task<bool?> TrySendViaWindowsPrinterBridgeAsync(PrinterStation station, byte[] bytes, PrintJobKind jobKind)
+    {
+        bool available;
+        try
+        {
+            available = await _js.InvokeAsync<bool>("restaurantOrdersWindowsPrinter.isAvailable");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Δεν είναι διαθέσιμο το Windows print bridge για τον σταθμό {Name}.", station.Name);
+            return null;
+        }
+
+        if (!available)
+            return null;
+
+        try
+        {
+            var result = await _js.InvokeAsync<string>("restaurantOrdersWindowsPrinter.printRaw",
+                station.ConnectionType,
+                station.IpAddress,
+                station.Port,
+                station.WindowsPrinterName,
+                Convert.ToBase64String(bytes),
+                Math.Clamp(station.Copies, 1, 5));
+            if (string.Equals(result, "printed", StringComparison.Ordinal))
+            {
+                _logger.LogInformation("Η εκτύπωση {Kind} στάλθηκε μέσω του τοπικού Windows bridge στον σταθμό {Name}.",
+                    jobKind, station.Name);
+                return true;
+            }
+
+            LastPrintError = "Το Windows print bridge δεν ολοκλήρωσε την εκτύπωση.";
+            if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
+            return false;
+        }
+        catch (Exception ex)
+        {
+            // Do not also queue/retry a job after the local bridge may have sent it;
+            // a lost acknowledgement could otherwise produce duplicate tickets.
+            _logger.LogError(ex, "Αποτυχία τοπικής Windows εκτύπωσης στον σταθμό {Name}.", station.Name);
+            LastPrintError = $"Windows bridge: {ex.Message}";
             if (jobKind == PrintJobKind.Test) LastTestError = LastPrintError;
             return false;
         }

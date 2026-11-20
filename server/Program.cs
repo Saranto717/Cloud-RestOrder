@@ -183,6 +183,10 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
+// The locally installed Windows POS can act as a loopback-only print bridge
+// for the Cloud POS page opened in a browser on this same computer.
+app.UseWindowsCloudPrintBridge();
+
 // The Cloud API proxies this app from an internal Docker hostname. Restore the
 // public request origin from headers supplied by that authenticated gateway so
 // Blazor navigation and auth redirects never expose "cloud-web:8080" to users.

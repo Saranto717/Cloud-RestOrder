@@ -5,7 +5,7 @@
 @inject PrinterService PrinterSvc
 
 <h2>Εκτυπωτές</h2>
-<p class="hint">Υποστηρίζονται δικτυακοί ESC/POS, USB ESC/POS μέσω ουράς Windows και ο ενσωματωμένος εκτυπωτής Sunmi. Η δικτυακή εκτύπωση γίνεται από την τοπική POS συσκευή στο ίδιο Wi‑Fi με τον εκτυπωτή· το cloud αποθηκεύει και συγχρονίζει τις παραγγελίες, αλλά δεν ανοίγει σύνδεση προς τον εκτυπωτή. Η USB εκτύπωση απαιτεί τοπική εφαρμογή Windows με εγκατεστημένη ουρά εκτυπωτή.</p>
+<p class="hint">Υποστηρίζονται δικτυακοί ESC/POS, USB ESC/POS μέσω ουράς Windows και ο ενσωματωμένος εκτυπωτής Sunmi. Από Android, η εφαρμογή POS στέλνει απευθείας στο τοπικό δίκτυο. Από Cloud POS σε Windows, χρειάζεται ενεργή τοπική υπηρεσία RestaurantOrders στον ίδιο υπολογιστή· αυτή στέλνει δικτυακές εκτυπώσεις ESC/POS ή USB RAW. Ο browser μπορεί να ζητήσει άδεια πρόσβασης στο τοπικό δίκτυο.</p>
 
 <div class="admin-form" style="align-items:center;gap:9px">
     <input @bind="newName" placeholder="Όνομα (π.χ. Κουζίνα ή Sunmi V2)" />
@@ -30,7 +30,7 @@
             <option value="PC737">Codepage: PC737</option>
             <option value="1253">Codepage: Windows-1253</option>
         </select>
-        <span class="hint">RAW ESC/POS μέσω Windows spooler. Δεν λειτουργεί απευθείας από το cloud χωρίς print bridge.</span>
+        <span class="hint">RAW ESC/POS μέσω της εγκατεστημένης ουράς Windows. Για Cloud POS, η υπηρεσία RestaurantOrders πρέπει να είναι ενεργή στον ίδιο υπολογιστή.</span>
     }
     else
     {

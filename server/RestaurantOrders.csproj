@@ -30,6 +30,8 @@
 
   <ItemGroup>
     <Compile Remove="CloudPrintBridge/**/*.cs" />
+    <Content Remove="CloudPrintBridge/**/*" />
+    <None Remove="CloudPrintBridge/**/*" />
     <Content Update="**/*.db;**/*.db-shm;**/*.db-wal;**/*.sqlite;**/*.log;appsettings.Local.json;appsettings.*.local.json"
              CopyToPublishDirectory="Never" />
     <None Update="**/*.db;**/*.db-shm;**/*.db-wal;**/*.sqlite;**/*.log;appsettings.Local.json;appsettings.*.local.json"

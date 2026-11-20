@@ -32,6 +32,20 @@ public sealed class CloudPrintAgentResolver(IServiceProvider services, ILogger<C
             }
         }
 
+        try
+        {
+            var js = services.GetService<IJSRuntime>();
+            if (js is not null && await js.InvokeAsync<bool>("restaurantOrdersWindowsPrinter.isAvailable", cancellationToken))
+            {
+                logger.LogInformation("Using the current Windows computer as the local cloud printer node.");
+                return false;
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogDebug(exception, "No current-device Windows print bridge is available; queueing the cloud print batch for a local POS node.");
+        }
+
         // Cloud-hosted code cannot reach a store's private LAN. Keep the accepted
         // batch durable for the paired local Windows POS/print node; never fall
         // back to sending raw TCP through the Docker host.
