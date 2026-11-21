@@ -4,6 +4,53 @@ window.restaurantOrders = window.restaurantOrders || {};
 window.restaurantOrders.isWideTableBoard = function () {
     return window.matchMedia('(min-width: 960px) and (min-height: 600px)').matches;
 };
+// A single tap selects a table on the wide POS board. Support double-tap on
+// touch screens as the fast path into that table's order, matching mouse double-click.
+window.restaurantOrders.enableTableDoubleTap = function (board) {
+    if (!board) return;
+    if (board._tableDoubleTapCleanup) board._tableDoubleTapCleanup();
+
+    let previousTarget = null;
+    let previousAt = 0;
+    let previousX = 0;
+    let previousY = 0;
+    const onPointerUp = function (event) {
+        if (event.pointerType !== 'touch') return;
+        const target = event.target instanceof Element ? event.target.closest('[data-floor-table-id]') : null;
+        if (!target || !board.contains(target)) {
+            previousTarget = null;
+            return;
+        }
+
+        const now = performance.now();
+        const isSecondTap = target === previousTarget && now - previousAt <= 450 &&
+            Math.hypot(event.clientX - previousX, event.clientY - previousY) <= 28;
+        if (isSecondTap) {
+            previousTarget = null;
+            target.dispatchEvent(new MouseEvent('dblclick', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                detail: 2
+            }));
+            return;
+        }
+
+        previousTarget = target;
+        previousAt = now;
+        previousX = event.clientX;
+        previousY = event.clientY;
+    };
+
+    board.addEventListener('pointerup', onPointerUp, { passive: true });
+    board._tableDoubleTapCleanup = function () {
+        board.removeEventListener('pointerup', onPointerUp);
+        delete board._tableDoubleTapCleanup;
+    };
+};
+window.restaurantOrders.disableTableDoubleTap = function (board) {
+    if (board && board._tableDoubleTapCleanup) board._tableDoubleTapCleanup();
+};
 window.restaurantOrders.observeProductGrid = function (panel, dotNetRef) {
     if (!panel || !dotNetRef) return;
     if (panel._productGridCleanup) panel._productGridCleanup();
@@ -241,8 +288,8 @@ window.getFloorplanPosition = function (canvasEl, clientX, clientY, tableName) {
     const probe = document.createElement('div');
     probe.className = 'floor-table';
     probe.textContent = tableName || '';
-    Object.assign(probe.style, { position: 'fixed', left: '-10000px', top: '-10000px', transform: 'none', visibility: 'hidden' });
-    document.body.appendChild(probe);
+    Object.assign(probe.style, { position: 'absolute', left: '-10000px', top: '-10000px', transform: 'translate(-50%,-50%) scale(var(--floorplan-table-scale,1))', visibility: 'hidden' });
+    canvasEl.appendChild(probe);
     const tile = probe.getBoundingClientRect();
     probe.remove();
     const halfW = tile.width / 2;
