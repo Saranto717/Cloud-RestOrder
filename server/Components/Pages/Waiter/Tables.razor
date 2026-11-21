@@ -3,6 +3,7 @@
 @attribute [Authorize(Roles = "Waiter,Admin")]
 
 @rendermode InteractiveServer
+@implements IAsyncDisposable
 
 @inject IDbContextFactory<AppDbContext> DbFactory
 
@@ -54,6 +55,7 @@
         border:1px solid #d7e1ef !important;
         box-shadow:0 5px 14px rgba(33,58,94,.09);
         transition:transform .16s ease, box-shadow .16s ease, background-color .16s ease;
+        touch-action:manipulation;
     }
     .tables-page .table-btn:not(.occupied) { background:rgba(255,255,255,.97); }
     .tables-page .table-btn:hover:not(.occupied),
@@ -290,7 +292,7 @@
     }
 </style>
 
-<div class="tables-page @(venueImage is null ? "" : "has-venue-image")" style="--tables-bg:@pageBackground;--venue-image:url('@venueImage')" @oncontextmenu="OpenBackgroundMenu" @oncontextmenu:preventDefault="true">
+<div class="tables-page @(venueImage is null ? "" : "has-venue-image")" @ref="tableBoardRef" style="--tables-bg:@pageBackground;--venue-image:url('@venueImage')" @oncontextmenu="OpenBackgroundMenu" @oncontextmenu:preventDefault="true">
 
     <div class="waiter-topbar">
 
@@ -468,12 +470,14 @@
                 var total = totalsByTable.GetValueOrDefault(t.Id, 0m);
 
                 <button class="floor-table-btn @(occupiedTableIds.Contains(t.Id) ? "occupied" : "") @(selectedTableId == t.Id ? "board-selected" : "")"
+                        data-floor-table-id="@t.Id"
                         @key="t.Id"
-                        style="left:@(t.PosX)%; top:@(t.PosY)%; @GetTableTileStyle(t) @GetFloorTileSizeStyle(t)"
+                        style="@GetFloorTableStyle(t)"
                         @oncontextmenu="() => OpenTableStyle(t)"
                         @oncontextmenu:preventDefault="true"
                         @oncontextmenu:stopPropagation="true"
-                        @onclick="() => SelectOrOpenTableAsync(t.Id)">
+                        @onclick="() => SelectOrOpenTableAsync(t.Id)"
+                        @ondblclick="() => OpenTableFromBoard(t.Id)">
 
                     <span class="table-name-line">
                         @if (occupiedTableIds.Contains(t.Id))
@@ -518,11 +522,13 @@
                 var total = totalsByTable.GetValueOrDefault(t.Id, 0m);
 
                 <button class="table-btn @(occupiedTableIds.Contains(t.Id) ? "occupied" : "") @(selectedTableId == t.Id ? "board-selected" : "")"
+                        data-floor-table-id="@t.Id"
                         style="@GetTableTileStyle(t)"
                         @oncontextmenu="() => OpenTableStyle(t)"
                         @oncontextmenu:preventDefault="true"
                         @oncontextmenu:stopPropagation="true"
-                        @onclick="() => SelectOrOpenTableAsync(t.Id)">
+                        @onclick="() => SelectOrOpenTableAsync(t.Id)"
+                        @ondblclick="() => OpenTableFromBoard(t.Id)">
 
                     <span class="table-name-line">
                         @if (occupiedTableIds.Contains(t.Id))
@@ -601,7 +607,7 @@
             {
                 <span class="selected-table-eyebrow">Table service</span>
                 <h3>Επίλεξε τραπέζι</h3>
-                <p>Πάτησε σε ένα τραπέζι στην κάτοψη για να δεις την παραγγελία και τις ενέργειες.</p>
+                <p>Μονό πάτημα για επιλογή και ενέργειες. Διπλό πάτημα ή κλικ για άνοιγμα παραγγελίας.</p>
             }
         </aside>
     }
@@ -759,6 +765,7 @@
     private string editingTableBorder = "#d8dde6";
     private int editingTableFontSize = 16;
     private bool editingTableBold = true;
+    private ElementReference tableBoardRef;
 
     private string GetTableTileStyle(RestaurantTable t) =>
         $"background-color:{t.TileBackgroundColor};color:{t.TileTextColor};border-color:{t.TileBorderColor};font-size:{Math.Clamp((int)Math.Round(Math.Clamp(t.TileFontSize, 10, 40) * deviceScale / 100.0), 9, 60)}px;font-weight:{(t.TileBold ? 800 : 600)};";
@@ -794,6 +801,9 @@
         var (w, h, _) = GetTileSize(t.TableAreaId);
         return $"width:{w}px;height:{h}px;";
     }
+
+    private string GetFloorTableStyle(RestaurantTable t) =>
+        $"left:{(t.PosX ?? 50).ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)}%;top:{(t.PosY ?? 50).ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)}%;{GetTableTileStyle(t)}{GetFloorTileSizeStyle(t)}";
 
     private async Task ChangeDeviceScaleAsync(int delta)
     {
@@ -876,6 +886,8 @@
                     editingBackground = saved;
                     await InvokeAsync(StateHasChanged);
                 }
+
+                await JS.InvokeVoidAsync("restaurantOrders.enableTableDoubleTap", tableBoardRef);
             }
 
             // Start after the interactive circuit is attached. Navigating during
@@ -1273,6 +1285,14 @@
         GoToTable(id);
     }
 
+    private void OpenTableFromBoard(int id)
+    {
+        if (transferMode)
+            GoToTable(id);
+        else
+            OpenSelectedTable(id);
+    }
+
     private void OpenSelectedTable(int tableId) => Nav.NavigateTo($"/waiter/table/{tableId}");
 
     private void PrintSelectedTableBill(int tableId) => Nav.NavigateTo($"/waiter/table/{tableId}?printBill=true", forceLoad: true);
@@ -1288,6 +1308,18 @@
         selectedAreaId = areaId;
         if (!FilteredTables.Any(t => t.Id == selectedTableId))
             selectedTableId = FilteredTables.FirstOrDefault()?.Id;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("restaurantOrders.disableTableDoubleTap", tableBoardRef);
+        }
+        catch (JSDisconnectedException)
+        {
+            // The page is already gone with its Blazor Server circuit.
+        }
     }
 
     private async Task StartTakeAwayAsync()

@@ -7,74 +7,187 @@
 @inject IConfiguration Configuration
 @inject NavigationManager Nav
 
-<h2>Κάτοψη Μαγαζιού</h2>
-<p class="hint">
-    Για να τοποθετήσεις ή να μετακινήσεις τραπέζι με ακρίβεια: πάτησε το όνομά του στη λίστα,
-    ώστε να σκουρύνει, και μετά πάτησε το σημείο που θέλεις μέσα στην κάτοψη. Αυτό λειτουργεί
-    και για τραπέζια που είναι ήδη τοποθετημένα και δεν χρειάζεται σύρσιμο. Για μικροδιορθώσεις,
-    μπορείς επίσης να σύρεις το τραπέζι από το σημείο που το πιάνεις.
-</p>
+<style>
+    .admin-floorplan-page { display:flex; flex-direction:column; gap:14px; min-width:0; }
+    .admin-floorplan-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+    .admin-floorplan-heading h2 { margin:0; color:#172b4d; letter-spacing:-.025em; }
+    .admin-floorplan-heading p { margin:5px 0 0; color:#64748b; }
+    .admin-floorplan-heading a { flex:0 0 auto; min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:9px 14px; border:1px solid #c9d8ea; border-radius:12px; background:#f5f9ff; color:#17345f; font-weight:800; text-decoration:none; }
+    .admin-floorplan-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+    .admin-floorplan-stat { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:13px 16px; border:1px solid #dce5ef; border-radius:14px; background:#fff; box-shadow:0 3px 10px rgba(24,52,89,.04); }
+    .admin-floorplan-stat span { color:#64748b; font-size:.86rem; }
+    .admin-floorplan-stat strong { color:#17345f; font-size:1.2rem; font-variant-numeric:tabular-nums; }
+    .admin-floorplan-layout { display:grid; grid-template-columns:minmax(250px,310px) minmax(0,1fr); gap:14px; min-width:0; align-items:stretch; }
+    .admin-floorplan-sidebar { display:flex; flex-direction:column; gap:11px; min-width:0; max-height:calc(100dvh - 220px); padding:15px; border:1px solid #dce5ef; border-radius:17px; background:#fff; box-shadow:0 8px 22px rgba(24,52,89,.07); }
+    .admin-floorplan-sidebar-heading { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+    .admin-floorplan-sidebar-heading h3 { margin:0; color:#172b4d; font-size:1rem; }
+    .admin-floorplan-sidebar-heading span { color:#64748b; font-size:.78rem; }
+    .admin-floorplan-filters { display:grid; gap:7px; }
+    .admin-floorplan-filters input,.admin-floorplan-filters select { width:100%; min-height:42px; padding:8px 10px; border:1px solid #d4deeb; border-radius:10px; background:#fbfdff; color:#1d2d45; font:inherit; }
+    .admin-floorplan-table-list { display:grid; align-content:start; gap:6px; min-height:100px; overflow:auto; overscroll-behavior:contain; padding:2px 3px 2px 0; }
+    .admin-floorplan-table-pick { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:48px; padding:8px 10px; border:1px solid #e0e8f1; border-radius:11px; background:#fbfdff; color:#243650; text-align:left; cursor:pointer; }
+    .admin-floorplan-table-pick:hover { background:#f1f7ff; border-color:#b9d4fb; }
+    .admin-floorplan-table-pick.selected { background:#eaf3ff; border-color:#2476db; box-shadow:inset 3px 0 #2476db; }
+    .admin-floorplan-table-pick strong { display:block; overflow:hidden; text-overflow:ellipsis; }
+    .admin-floorplan-table-pick small { display:block; margin-top:2px; color:#75849a; }
+    .admin-floorplan-table-status { flex:0 0 auto; padding:4px 7px; border-radius:99px; background:#edf2f7; color:#66768c; font-size:.68rem; font-weight:800; }
+    .admin-floorplan-table-status.placed { background:#e8f7ed; color:#257348; }
+    .admin-floorplan-empty { margin:4px 0; padding:10px; border-radius:10px; background:#f5f8fc; color:#64748b; font-size:.85rem; }
+    .admin-floorplan-placement { display:grid; gap:8px; padding-top:11px; border-top:1px solid #e7edf4; }
+    .admin-floorplan-placement h4 { margin:0; color:#17345f; }
+    .admin-floorplan-placement p { margin:0; color:#64748b; font-size:.8rem; }
+    .admin-floorplan-coordinate { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .admin-floorplan-coordinate label { display:grid; gap:4px; color:#63748a; font-size:.75rem; font-weight:750; }
+    .admin-floorplan-coordinate input[type=number] { width:100%; min-height:38px; padding:7px; border:1px solid #d4deeb; border-radius:8px; }
+    .admin-floorplan-placement button { min-height:42px; border:0; border-radius:10px; background:#176b54; color:#fff; font:inherit; font-weight:850; cursor:pointer; }
+    .admin-floorplan-placement .cancel { background:#eef2f7; color:#334155; }
+    .admin-floorplan-stage { display:flex; flex-direction:column; min-width:0; padding:14px; border:1px solid #dce5ef; border-radius:17px; background:#fff; box-shadow:0 8px 22px rgba(24,52,89,.07); }
+    .admin-floorplan-stage-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:11px; }
+    .admin-floorplan-stage-toolbar strong { color:#17345f; }
+    .admin-floorplan-stage-toolbar span { display:block; margin-top:3px; color:#64748b; font-size:.8rem; }
+    .admin-floorplan-stage-actions { display:flex; flex-wrap:wrap; align-items:center; gap:7px; }
+    .admin-floorplan-stage-actions a,.admin-floorplan-stage-actions button { min-height:39px; padding:8px 11px; border:1px solid #d4deeb; border-radius:9px; background:#f7faff; color:#334c6c; font:inherit; font-size:.78rem; font-weight:800; text-decoration:none; cursor:pointer; }
+    .admin-floorplan-stage-actions button { border-color:#f0c6c6; background:#fff7f7; color:#a33535; }
+    .admin-floorplan-size { display:flex; align-items:center; gap:7px; padding:5px 8px; border:1px solid #d4deeb; border-radius:9px; background:#f7faff; color:#63748a; font-size:.75rem; font-weight:800; }
+    .admin-floorplan-size input { width:100px; }
+    .admin-floorplan-size strong { color:#17345f; }
+    .admin-floorplan-canvas { width:100%; height:clamp(390px,65dvh,820px); min-width:0; overflow:hidden; border:1px solid #cad6e5; border-radius:14px; background-color:#e7edf5; background-image:linear-gradient(rgba(55,77,105,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(55,77,105,.08) 1px,transparent 1px),linear-gradient(145deg,#f0f4f9,#e1e9f3); background-size:28px 28px,28px 28px,auto; }
+    .admin-floorplan-canvas .floor-table { min-width:76px; min-height:46px; display:grid; place-items:center; padding:8px 20px 8px 12px; transform:translate(-50%,-50%) scale(var(--floorplan-table-scale,1)); border:2px solid #2c4262; border-radius:12px; background:#fff; color:#172b4d; box-shadow:0 4px 10px rgba(24,45,76,.16); font-weight:850; }
+    .admin-floorplan-canvas .floor-table.selected { border-color:#1875df; background:#1478e8; color:#fff; box-shadow:0 0 0 4px rgba(20,120,232,.2),0 8px 18px rgba(24,45,76,.2); }
+    .admin-floorplan-canvas .floor-table.dragging { z-index:5; }
+    .admin-floorplan-status { margin:0; padding:10px 13px; border:1px solid #b6dfc4; border-radius:11px; background:#effaf3; color:#21633e; font-weight:750; }
+    @@media(max-width:900px) { .admin-floorplan-layout { grid-template-columns:1fr; } .admin-floorplan-sidebar { max-height:none; } .admin-floorplan-table-list { grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); max-height:230px; } .admin-floorplan-canvas { height:clamp(360px,58dvh,650px); } }
+    @@media(max-width:560px) { .admin-floorplan-heading { align-items:stretch; flex-direction:column; } .admin-floorplan-heading a { width:100%; box-sizing:border-box; } .admin-floorplan-stats { gap:6px; } .admin-floorplan-stat { align-items:flex-start; flex-direction:column; gap:3px; padding:9px; } .admin-floorplan-stat span { font-size:.7rem; } .admin-floorplan-stat strong { font-size:1rem; } .admin-floorplan-stage-toolbar { align-items:stretch; flex-direction:column; } .admin-floorplan-stage-actions { display:grid; grid-template-columns:1fr 1fr; } .admin-floorplan-size { grid-column:1/-1; justify-content:space-between; } .admin-floorplan-size input { flex:1; } .admin-floorplan-canvas { height:clamp(330px,52dvh,560px); background-size:22px 22px,22px 22px,auto; } }
+</style>
 
-<div class="floorplan-layout">
-    <div class="floorplan-sidebar">
-        <h4>Τραπέζια</h4>
-        @foreach (var t in tables)
-        {
-            <button class="table-pick-btn @(selectedForPlacementId == t.Id ? "selected" : "") @(t.PosX is not null ? "placed" : "")"
-                    @key="t.Id"
-                    @onclick="() => SelectForPlacement(t.Id)">
-                @(selectedForPlacementId == t.Id ? $"↳ Μετακίνηση: {t.Name}" : t.Name) @(t.PosX is null ? " (χωρίς θέση)" : "")
-            </button>
-        }
-        @if (selectedForPlacementId is not null)
-        {
-            <p class="hint"><strong>Επιλεγμένο: @tables.First(t => t.Id == selectedForPlacementId).Name</strong><br />Ρύθμισε τη θέση με τους sliders και δες την προεπισκόπηση στην κάτοψη.</p>
-            <div class="floorplan-coordinates">
-                <label>X: @placementX.ToString("0")% <input type="range" min="0" max="100" step="1" @bind="placementX" @bind:event="oninput" /></label>
-                <label>Y: @placementY.ToString("0")% <input type="range" min="0" max="100" step="1" @bind="placementY" @bind:event="oninput" /></label>
-                <div class="floorplan-coordinate-exact">
-                    <label>X <input type="number" min="0" max="100" step="1" @bind="placementX" /></label>
-                    <label>Y <input type="number" min="0" max="100" step="1" @bind="placementY" /></label>
-                </div>
-                <button type="button" class="primary" @onclick="SaveExactPosition">Αποθήκευση θέσης</button>
-            </div>
-            <button type="button" class="linkbtn-plain" @onclick="() => selectedForPlacementId = null">Ακύρωση μετακίνησης</button>
-        }
+<section class="admin-floorplan-page">
+    <header class="admin-floorplan-heading">
+        <div>
+            <h2>Κάτοψη τραπεζιών</h2>
+            <p>Οργάνωσε τον χώρο όπως είναι το μαγαζί σου. Σύρε τα τραπέζια ή επίλεξε θέση από τη λίστα.</p>
+        </div>
+        <a href="/admin/tables">⚙ Διαχείριση τραπεζιών</a>
+    </header>
+
+    <div class="admin-floorplan-stats" aria-label="Σύνοψη κάτοψης">
+        <div class="admin-floorplan-stat"><span>Ενεργά τραπέζια</span><strong>@tables.Count</strong></div>
+        <div class="admin-floorplan-stat"><span>Στην κάτοψη</span><strong>@tables.Count(IsPlaced)</strong></div>
+        <div class="admin-floorplan-stat"><span>Χωρίς θέση</span><strong>@tables.Count(t => !IsPlaced(t))</strong></div>
     </div>
 
-    <div class="floorplan-canvas-wrap">
-        <div class="floorplan-reset-bar">
-            <span class="hint">Για να ξεκινήσεις από την αρχή, αφαίρεσε όλα τα τραπέζια από την κάτοψη.</span>
-            <button type="button" class="danger" @onclick="UnplaceAll">Επαναφορά κάτοψης</button>
-        </div>
-        <div class="floorplan-canvas" @ref="canvasRef"
-             data-placement-table-id="@(selectedForPlacementId?.ToString() ?? "")"
-             data-placement-table-name="@(tables.FirstOrDefault(t => t.Id == selectedForPlacementId)?.Name ?? "")">
-            @foreach (var t in tables.Where(t => (t.PosX is not null && t.PosY is not null) || t.Id == selectedForPlacementId))
+    <div class="admin-floorplan-layout">
+        <aside class="admin-floorplan-sidebar" aria-label="Λίστα τραπεζιών">
+            <div class="admin-floorplan-sidebar-heading">
+                <h3>Τραπέζια</h3>
+                <span>@VisibleTables.Count() από @tables.Count</span>
+            </div>
+            <div class="admin-floorplan-filters">
+                <input type="search" placeholder="Αναζήτηση τραπεζιού…" aria-label="Αναζήτηση τραπεζιού" @bind="searchText" @bind:event="oninput" />
+                <select aria-label="Φίλτρο περιοχής" @bind="selectedAreaFilter" @bind:after="ApplyAreaFilter">
+                    <option value="0">Όλες οι περιοχές</option>
+                    @foreach (var area in areas)
+                    {
+                        <option value="@area.Id">@area.Name</option>
+                    }
+                </select>
+                <select aria-label="Φίλτρο τοποθέτησης" @bind="placementFilter">
+                    <option value="all">Όλα τα τραπέζια</option>
+                    <option value="unplaced">Χωρίς θέση</option>
+                    <option value="placed">Στην κάτοψη</option>
+                </select>
+            </div>
+
+            <div class="admin-floorplan-table-list">
+                @foreach (var t in VisibleTables)
+                {
+                    <button class="admin-floorplan-table-pick @(selectedForPlacementId == t.Id ? "selected" : "")" @key="t.Id" @onclick="() => SelectForPlacement(t.Id)">
+                        <span><strong>@t.Name</strong><small>@(t.TableArea?.Name ?? "Χωρίς περιοχή")</small></span>
+                        <span class="admin-floorplan-table-status @(IsPlaced(t) ? "placed" : "")">@(IsPlaced(t) ? "Στην κάτοψη" : "Χωρίς θέση")</span>
+                    </button>
+                }
+                @if (!VisibleTables.Any())
+                {
+                    <p class="admin-floorplan-empty">Δεν βρέθηκαν τραπέζια με αυτά τα φίλτρα.</p>
+                }
+            </div>
+
+            @if (selectedForPlacementId is int selectedId && tables.FirstOrDefault(t => t.Id == selectedId) is RestaurantTable selectedTable)
             {
-                <div class="floor-table @(t.Id == selectedForPlacementId ? "selected" : "")" @key="t.Id" data-table-id="@t.Id" style="left:@(GetX(t))%; top:@(GetY(t))%;">
-                    @t.Name
-                    <button type="button" class="floor-table-remove" title="Αφαίρεση από την κάτοψη"
-                            @onclick="() => Unplace(t)" @onclick:stopPropagation="true">✕</button>
+                <div class="admin-floorplan-placement">
+                    <h4>Τοποθέτηση: @selectedTable.Name</h4>
+                    <p>Πάτησε στη θέση που θέλεις ή ρύθμισε τις συντεταγμένες.</p>
+                    <label>X: @placementX.ToString("0")% <input type="range" min="0" max="100" step="1" @bind="placementX" @bind:event="oninput" /></label>
+                    <label>Y: @placementY.ToString("0")% <input type="range" min="0" max="100" step="1" @bind="placementY" @bind:event="oninput" /></label>
+                    <div class="admin-floorplan-coordinate">
+                        <label>X (%) <input type="number" min="0" max="100" step="1" @bind="placementX" /></label>
+                        <label>Y (%) <input type="number" min="0" max="100" step="1" @bind="placementY" /></label>
+                    </div>
+                    <button type="button" @onclick="SaveExactPosition">Αποθήκευση θέσης</button>
+                    <button type="button" class="cancel" @onclick="CancelPlacement">Ακύρωση επιλογής</button>
                 </div>
             }
-        </div>
+        </aside>
+
+        <section class="admin-floorplan-stage" aria-label="Προεπισκόπηση κάτοψης">
+                    <div class="admin-floorplan-stage-toolbar">
+                <div><strong>@(selectedAreaFilter == 0 ? "Όλος ο χώρος" : areas.FirstOrDefault(a => a.Id == selectedAreaFilter)?.Name)</strong><span>Σύρε ένα τραπέζι για αλλαγή θέσης. Οι αλλαγές αποθηκεύονται αυτόματα.</span></div>
+                <div class="admin-floorplan-stage-actions">
+                    <label class="admin-floorplan-size" title="Αλλάζει μόνο την προεπισκόπηση αυτής της συσκευής">
+                        Μέγεθος
+                        <input type="range" min="@TableTileLimits.MinDeviceScale" max="@TableTileLimits.MaxDeviceScale" step="10" @bind="tableScale" @bind:after="SaveTableScale" />
+                        <strong>@tableScale%</strong>
+                    </label>
+                    <a href="/admin/tables">＋ Προσθήκη τραπεζιών</a>
+                    <button type="button" @onclick="UnplaceAll">Επαναφορά κάτοψης</button>
+                </div>
+            </div>
+            <div class="floorplan-canvas admin-floorplan-canvas" @ref="canvasRef" style="--floorplan-table-scale:@TableScaleCss"
+                 data-placement-table-id="@(selectedForPlacementId?.ToString() ?? "")"
+                 data-placement-table-name="@(tables.FirstOrDefault(t => t.Id == selectedForPlacementId)?.Name ?? "")">
+                @foreach (var t in CanvasTables)
+                {
+                    <div class="floor-table @(t.Id == selectedForPlacementId ? "selected" : "")" @key="t.Id" data-table-id="@t.Id" style="@GetCanvasTableStyle(t)">
+                        @t.Name
+                        <button type="button" class="floor-table-remove" title="Αφαίρεση από την κάτοψη" aria-label="Αφαίρεση του @t.Name από την κάτοψη"
+                                @onclick="() => Unplace(t)" @onclick:stopPropagation="true">✕</button>
+                    </div>
+                }
+            </div>
+        </section>
     </div>
-</div>
-@if (!string.IsNullOrWhiteSpace(placementStatus))
-{
-    <p class="hint" role="status">@placementStatus</p>
-}
+
+    @if (!string.IsNullOrWhiteSpace(placementStatus))
+    {
+        <p class="admin-floorplan-status" role="status">@placementStatus</p>
+    }
+</section>
 
 @code {
     private List<RestaurantTable> tables = new();
+    private List<TableArea> areas = new();
     private int? selectedForPlacementId;
+    private int selectedAreaFilter;
+    private string placementFilter = "all";
+    private string searchText = "";
     private ElementReference canvasRef;
     private DotNetObjectReference<Floorplan>? dotNetRef;
     private bool jsInitDone;
     private string? placementStatus;
     private double placementX = 50;
     private double placementY = 50;
+    private int tableScale = 100;
+    private string TableScaleCss => (tableScale / 100d).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+
+    private IEnumerable<RestaurantTable> VisibleTables => tables.Where(table =>
+        (selectedAreaFilter == 0 || table.TableAreaId == selectedAreaFilter) &&
+        (placementFilter == "all" || (placementFilter == "placed" ? IsPlaced(table) : !IsPlaced(table))) &&
+        (string.IsNullOrWhiteSpace(searchText) || table.Name.Contains(searchText.Trim(), StringComparison.OrdinalIgnoreCase)));
+
+    private IEnumerable<RestaurantTable> CanvasTables => tables.Where(table =>
+        (selectedAreaFilter == 0 || table.TableAreaId == selectedAreaFilter) &&
+        (IsPlaced(table) || table.Id == selectedForPlacementId));
+
+    private static bool IsPlaced(RestaurantTable table) => table.PosX is not null && table.PosY is not null;
 
     protected override async Task OnInitializedAsync()
     {
@@ -91,6 +204,13 @@
         if (Configuration.GetValue<bool>("Edition:TakeAwayOnly")) return;
         if (!jsInitDone)
         {
+            var savedScale = await JS.InvokeAsync<string?>("localStorage.getItem", "restaurant.tables.tileScale");
+            if (int.TryParse(savedScale, out var scale) && TableTileLimits.Scale(scale) != tableScale)
+            {
+                tableScale = TableTileLimits.Scale(scale);
+                await InvokeAsync(StateHasChanged);
+            }
+
             dotNetRef = DotNetObjectReference.Create(this);
             await JS.InvokeVoidAsync("initFloorplanDrag", canvasRef, dotNetRef);
             jsInitDone = true;
@@ -100,7 +220,15 @@
     private async Task Load()
     {
         using var db = await DbFactory.CreateDbContextAsync();
-        tables = await db.Tables.OrderBy(t => t.SortOrder).ThenBy(t => t.Name).ToListAsync();
+        tables = await db.Tables.Include(t => t.TableArea).Where(t => t.IsActive).OrderBy(t => t.SortOrder).ThenBy(t => t.Name).ToListAsync();
+        areas = await db.TableAreas.OrderBy(area => area.Name).ToListAsync();
+    }
+
+    private void ApplyAreaFilter()
+    {
+        if (selectedForPlacementId is int selectedId && !tables.Any(table => table.Id == selectedId &&
+                (selectedAreaFilter == 0 || table.TableAreaId == selectedAreaFilter)))
+            selectedForPlacementId = null;
     }
 
     private void SelectForPlacement(int id)
@@ -118,8 +246,18 @@
         placementStatus = null;
     }
 
+    private void CancelPlacement() => selectedForPlacementId = null;
+
+    private async Task SaveTableScale()
+    {
+        tableScale = TableTileLimits.Scale(tableScale);
+        await JS.InvokeVoidAsync("localStorage.setItem", "restaurant.tables.tileScale", tableScale.ToString());
+    }
+
     private double GetX(RestaurantTable table) => table.Id == selectedForPlacementId ? Math.Clamp(placementX, 0, 100) : table.PosX ?? 50;
     private double GetY(RestaurantTable table) => table.Id == selectedForPlacementId ? Math.Clamp(placementY, 0, 100) : table.PosY ?? 50;
+    private string GetCanvasTableStyle(RestaurantTable table) =>
+        $"left:{GetX(table).ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)}%;top:{GetY(table).ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)}%;";
 
     private async Task SaveExactPosition()
     {
@@ -212,6 +350,8 @@
             entity.PosY = null;
             await db.SaveChangesAsync();
         }
+        if (selectedForPlacementId == t.Id)
+            selectedForPlacementId = null;
         await Load();
     }
 
