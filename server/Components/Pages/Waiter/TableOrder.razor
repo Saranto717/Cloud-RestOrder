@@ -533,7 +533,7 @@
 
     .order-layout {
         display: grid !important;
-        grid-template-columns: minmax(190px, min(var(--category-panel-width, 190px), calc(100vw - 380px))) minmax(0, 1fr) 330px !important;
+        grid-template-columns: minmax(190px, min(var(--category-panel-width, 190px), calc(100vw - 450px))) minmax(0, 1fr) 400px !important;
         gap: 14px;
         align-items: start;
     }
@@ -890,7 +890,7 @@
 
     @@media (max-width: 1050px) {
         .order-layout {
-            grid-template-columns: minmax(165px, min(var(--category-panel-width, 165px), calc(100vw - 340px))) minmax(0, 1fr) 300px !important;
+            grid-template-columns: minmax(165px, min(var(--category-panel-width, 165px), calc(100vw - 380px))) minmax(0, 1fr) 330px !important;
         }
     }
 
@@ -1847,6 +1847,113 @@
         .table-order-page .order-panel.mobile-open .desktop-action-label { display:none; }
         .table-order-page .order-panel.mobile-open .mobile-action-label { display:inline; }
     }
+
+    /* Compact item rows preserve their position and keep every field on one line. */
+    .table-order-page .order-panel .order-list li.order-item-interactive {
+        display:flex;
+        align-items:center;
+        flex-wrap:nowrap;
+        gap:4px;
+        min-width:0;
+        padding:5px 1px;
+        line-height:1.1;
+        overflow:hidden;
+    }
+    .table-order-page .order-panel .order-list li.order-item-interactive > input[type=checkbox] { flex:0 0 16px; margin:0; }
+    .table-order-page .order-panel .order-line-main {
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        flex:1 1 auto;
+        gap:5px;
+        min-width:0;
+    }
+    .table-order-page .order-panel .order-line-name {
+        display:block;
+        flex:1 1 auto;
+        min-width:0;
+        overflow:hidden;
+        overflow-wrap:normal;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+        font-size:.7rem;
+        line-height:1.1;
+    }
+    .table-order-page .order-panel .order-line-name .order-line-detail {
+        display:inline;
+        margin-left:2px;
+        font-size:.88em;
+        font-weight:600;
+        white-space:nowrap;
+    }
+    .table-order-page .order-panel .order-line-controls { gap:2px; }
+    .table-order-page .order-panel .quantity-step { width:23px; height:23px; font-size:.92rem; }
+    .table-order-page .order-panel .quantity-value { min-width:13px; font-size:.68rem; }
+    .table-order-page .order-panel .remove-btn {
+        flex:0 0 22px;
+        width:22px;
+        height:22px;
+        font-size:.65rem;
+    }
+    .table-order-page .order-panel .sent-tag {
+        flex:0 0 auto;
+        padding:2px 4px;
+        border-radius:4px;
+        font-size:.57rem;
+        line-height:1.1;
+        white-space:nowrap;
+    }
+    .table-order-page .order-panel .order-line-kitchen-warning {
+        display:block;
+        flex:0 1 120px;
+        min-width:0;
+        max-width:120px;
+        overflow:hidden;
+        color:#8a5011;
+        font-size:.55rem;
+        line-height:1.1;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+    }
+    .table-order-page .order-panel .total {
+        flex:0 0 auto;
+        margin:4px 0;
+        padding:7px 9px;
+        font-size:1rem;
+        line-height:1.15;
+    }
+    .table-order-page .order-panel > .send-btn {
+        flex:0 0 auto;
+        min-height:42px;
+        margin:3px 0 4px;
+        padding:6px 8px;
+        font-size:.78rem;
+    }
+    .table-order-page .order-panel .order-action-grid { flex:0 0 auto; gap:4px; margin-top:3px; }
+    .table-order-page .order-panel .order-action-grid .order-action-btn,
+    .table-order-page .order-panel .staff-consumption-btn {
+        min-height:34px;
+        padding:3px;
+        border-radius:8px;
+        font-size:.64rem;
+        line-height:1.05;
+    }
+    .table-order-page .order-panel .order-action-grid .action-icon { margin-right:2px; font-size:.82em; }
+    .table-order-page .order-panel .staff-consumption-btn { margin-top:3px; }
+    .table-order-page .order-panel .order-comment-box { gap:4px; margin:5px 0 2px; }
+    .table-order-page .order-panel .order-comment-box textarea { min-height:42px; padding:5px 7px; }
+
+    @@media (max-width:820px) {
+        .table-order-page .order-panel .order-list li.order-item-interactive { gap:3px; }
+        .table-order-page .order-panel .order-line-name { font-size:.66rem; }
+        .table-order-page .order-panel .order-line-kitchen-warning { flex-basis:96px; max-width:96px; }
+        .table-order-page .order-panel .quantity-step { width:25px; height:25px; }
+        .table-order-page .order-panel .remove-btn { flex-basis:24px; width:24px; height:24px; }
+        .table-order-page .order-panel .order-action-grid .order-action-btn,
+        .table-order-page .order-panel .staff-consumption-btn { min-height:40px; font-size:.68rem; }
+        .table-order-page .order-panel.mobile-open .order-action-grid .order-action-btn,
+        .table-order-page .order-panel.mobile-open .staff-consumption-btn { min-height:40px; font-size:.68rem; }
+    }
 </style>
 
 <div class="table-order-page @(venueImage is null ? "" : "has-venue-image")" style="--order-page-bg:@pageBackground;--venue-image:url('@venueImage')" @onclick="CloseCustomizationMenus" @oncontextmenu="OpenOrderBackgroundMenu" @oncontextmenu:preventDefault="true">
@@ -2160,7 +2267,7 @@
                         @onclick="() => HandleOrderItemTap(oi)">
                         @if (selectionMode) { <input type="checkbox" checked="@selectedOrderItemIds.Contains(oi.Id)" @onchange="(e) => SetOrderItemSelected(oi.Id, e)" @onclick:stopPropagation="true" aria-label="Επιλογή είδους" /> }
                         <div class="order-line-main">
-                        <span class="order-line-name">
+                        <span class="order-line-name" title="@DescribeOrderLine(oi)">
                             @oi.MenuItem!.Name
                             @if (oi.ExtrasPrice > 0)
 
@@ -2171,7 +2278,7 @@
 
 
                             {
-                                <text> (+€@oi.ExtrasPrice.ToString("0.00"))</text>
+                                <small class="order-line-detail"> · +€@oi.ExtrasPrice.ToString("0.00")</small>
                             }
                             @if (!string.IsNullOrWhiteSpace(oi.Notes))
 
@@ -2182,13 +2289,11 @@
 
 
                             {
-                                <br />
-
-                                <small>@oi.Notes</small>
+                                <small class="order-line-detail"> · @oi.Notes</small>
                             }
                             @if (oi.DiscountPercent > 0m)
                             {
-                                <br /><small class="discount-tag">Έκπτωση @oi.DiscountPercent.ToString("0.##")% · €@LineTotalForQuantity(oi, RemainingQuantityForItem(oi)).ToString("0.00")</small>
+                                <small class="order-line-detail discount-tag"> · Έκπτωση @oi.DiscountPercent.ToString("0.##")% · €@LineTotalForQuantity(oi, RemainingQuantityForItem(oi)).ToString("0.00")</small>
                             }
                         </span>
                         <span class="order-line-controls">
@@ -2214,7 +2319,7 @@
                             <span class="sent-tag">απεστάλη</span>
                             @if (oi.KitchenPrintUnconfirmed)
                             {
-                                <small>Κουζίνα: μη επιβεβαιωμένη εκτύπωση</small>
+                                <small class="order-line-kitchen-warning" title="Κουζίνα: μη επιβεβαιωμένη εκτύπωση">⚠ Κουζίνα: μη επιβεβ. εκτύπωση</small>
                             }
                         }
                     </li>
@@ -7340,6 +7445,22 @@
         var unitGross = (item.MenuItem?.Price ?? 0m) + item.ExtrasPrice;
         var discount = Math.Clamp(item.DiscountPercent, 0m, 100m) / 100m;
         return Math.Round(quantity * unitGross * (1m - discount), 2);
+    }
+
+    private string DescribeOrderLine(OrderItem item)
+    {
+        var details = new List<string>
+        {
+            item.MenuItem?.Name ?? "Είδος",
+            $"Ποσότητα: {RemainingQuantityForItem(item)}"
+        };
+        if (item.ExtrasPrice > 0m) details.Add($"Επιπλέον: €{item.ExtrasPrice:0.00}");
+        if (!string.IsNullOrWhiteSpace(item.Notes)) details.Add($"Σχόλιο: {item.Notes}");
+        if (item.DiscountPercent > 0m)
+            details.Add($"Έκπτωση {item.DiscountPercent:0.##}% · σύνολο €{LineTotalForQuantity(item, RemainingQuantityForItem(item)):0.00}");
+        if (item.IsPrinted)
+            details.Add(item.KitchenPrintUnconfirmed ? "Στάλθηκε, η εκτύπωση κουζίνας δεν επιβεβαιώθηκε" : "Απεστάλη στην κουζίνα");
+        return string.Join(" · ", details);
     }
 
     private decimal CurrentOrderTotal => order.Items.Where(i => !i.IsCancelled)
